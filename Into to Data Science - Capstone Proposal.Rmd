@@ -1,0 +1,37 @@
+---
+title: "Into to Data Science - Capstone Proposal"
+author: "John Campi"
+date: "October 12, 2018"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+### What is the problem you want to solve?
+
+Identify the key instrument sensors of a semiconductor manufacturing line and model the alarm conditions for potential failures. 
+
+
+### Who is your client and why do they care about this problem? In other words, what will your client DO or DECIDE based on your analysis that they wouldn't have otherwise?
+
+This capability would be sought out by any semiconductor manufacturer who wants to maximize their yield. Currently wafers are tested after specific process levels are completed. Much of the critical testing can't be performed until very far along in the manufactuing process. Thus a failure early in the process will consume costly resources as the wafer continues onto other fabrication steps, only to be junked at the end. If statistical sampling is used then there's also the added risk of failing chips shipping to customers.Having the ability to catch failures in almost real time during any process step minimized the chance of failure propagation and improves isolation time of equipment issues thereby greatly improving yield.
+
+
+### What data are you going to use for this? How will you acquire this data?
+
+[SECOM Data Set](http://archive.ics.uci.edu/ml/datasets/secom)
+Dataset is comprised of 1567 examples 591 features and 104 fails.
+    
+
+### In brief, outline your approach to solving this problem (knowing that this might change later).
+
+- The first step is to identify the relevant sensors and try to reduce the number of variables through PCM analysis.
+- Perform regression to model the various failure conditions.
+
+
+### What are your deliverables? Typically, this would include code, along with a paper and/or a slide deck.
+
+- A report describing the methodology and model. The R program can be included as an appendix.
+- A slide show presenting the overall procedure and benefits.
