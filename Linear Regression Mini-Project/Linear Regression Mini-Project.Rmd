@@ -1,0 +1,220 @@
+---
+title: "Linear Regression Mini-Project"
+author: "John Campi"
+date: "December 21, 2018"
+output:
+  html_document:
+    highlight: tango
+    number_sections: no
+    theme: united
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    highlight: tango
+    number_sections: no
+    toc: yes
+    toc_depth: 3
+linkcolor: blue
+geometry: left=2.5cm,right=2.5cm,top=2cm,bottom=2cm
+citecolor: blue
+urlcolor: blue
+fig_caption: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = T)
+
+# Set options.
+options(max.print=100)
+```
+
+```{r initialization, echo=F, message=F, warning=F, results='hide'}
+# load required libraries
+library(ggplot2, warn.conflicts=F, quietly=T)
+```
+\pagebreak
+
+# Exercise 1a: least squares regression
+
+**Requirements:**
+
+Use the states.rds data set. Fit a model predicting energy consumed
+per capita (energy) from the percentage of residents living in
+metropolitan areas (metro). Be sure to:
+
+>  1. Examine/plot the data before fitting the model
+   2. Print and interpret the model `summary'
+   3. `plot' the model to look for deviations from modeling assumptions
+
+```{r read data, echo=F, message=F, warning=F, results='hide'}
+# read the states data
+states.data <- readRDS("dataSets/states.rds") 
+#get labels
+states.info <- data.frame(attributes(states.data)[c("names", "var.labels")])
+```
+
+##   1a.1. Examine/plot the data before fitting the model
+
+First subset the states.data dataframe into just the two variables metro and energy to make the data of interest easier to work with. Next run a summary() of the dataset to check for anomalies where it's seen that both variables have a missing value.
+
+```{r ex1a_1, echo=T, message=F, warning=F}
+# summary of metro and energy columns, all rows
+# Notable issues:
+#      - 1 missing "NA" value for each variable.
+ex1a.subset <- subset(states.data, select = c("metro", "energy"))
+summary(ex1a.subset)
+```
+
+Next, explore the correlation between the model variables by running the cor() functiono. While the correlation table shows that there's some inverse correlation between the variables, examination of the scatterplot of metro vs energy shows it's a tenuous relationship at best with outliers skewing the correlation.
+
+```{r ex1a_1 correlation, echo=T, message=F, warning=F}
+# correlation between metro and energy
+cor(na.omit(ex1a.subset))
+
+# scatter plot of metro vs energy
+plot(ex1a.subset)
+```
+
+##   1a.2. Print and interpret the model `summary'
+
+The fit summary below shows that the R-squared value is poor and p-value for the fit not very significant suggesting that metro is not the best regressor for the model.
+
+```{r ex1a_2, echo=T, message=F, warning=F}
+# Fit regression model
+fit_1a <- lm(energy ~ metro,                 # regression formula
+             data=na.omit(states.data))      # data set, excluding "NA"s.
+
+# Summarize and print the results
+summary(fit_1a)                              # show regression coefficients table
+```
+
+##   1a.3. `plot' the model to look for deviations from modeling assumptions
+
+The residual plots below show that there are a few outliers and that the residuals are not normally distributed. Another sign that the model isn't very good.
+
+```{r ex1a_3, echo=T, message=F, warning=F}
+par(mar = c(4, 4, 2, 2), mfrow = c(2, 2))    # 2x2 plot array
+plot(fit_1a)                                 # all summary plots
+```
+
+# Exercise 1b: least squares regression (cont.)
+
+**Requirements:**
+
+Select one or more additional predictors to add to your model and
+repeat steps 1-3. Is this model significantly better than the model
+with 'metro' as the only predictor?
+
+##   1b.1. Examine/plot the data before fitting the model
+
+Initially fit all the available numeric regressors to find the most signicant contributors. Reviewing the fit summary report below it's clear that 'toxic' and 'green' are the best regressors to add based on their significant t-values and low p-values.
+
+```{r ex1b_1a, echo=T, message=F, warning=F}
+# Fit all regressors and check their significance.
+fit_all <- lm(energy ~ . -state -region,     # regress all numeric variables
+              data=na.omit(states.data))     # data set, excluding "NA"s.
+summary(fit_all)                             # toxic and green are most significant
+```
+
+Again subsetting the states.data dataframe into the variables of interest, a summary() of data and review for anomalies shows 1 missing "NA" value for 'metro', 'energy' and 'toxic', and 3 for 'green'.
+
+```{r ex1b_1b, echo=T, message=F, warning=F}
+##   1. Examine/plot the data before fitting the model
+# summary of metro, energy, toxic and green columns, all rows
+# Notable issues:
+#      - 1 missing "NA" value for metro, energy and toxic, 3 for green.
+ex1b.subset <- subset(states.data, select = c("metro", "energy", "toxic", "green"))
+summary(ex1b.subset)
+```
+
+Correlation analysis and a scatter plot of model variables show a good correlation between 'energy' and 'toxic' & 'green'.
+
+```{r ex1b_1b plot, echo=T, message=F, warning=F}
+# correlation of model variables
+cor(na.omit(ex1b.subset))
+
+# scatter plot of metro vs energy
+#par(mar = c(4, 4, 2, 2), mfrow = c(1, 1))    # reset for single plot
+plot(ex1b.subset)
+```
+
+##   1b.2. Print and interpret the model `summary'
+
+```{r ex1b_2, echo=T, message=F, warning=F}
+# New fit with toxic and green regressors added.
+fit_1b <- lm(energy ~ metro + toxic + green,# regress all numeric variables
+             data=na.omit(states.data))      # data set, excluding "NA"s.
+summary(fit_1b)                              # show regression coefficients table
+```
+
+The summary above confirms that the addition of 'toxic' and 'green' are warranted based on the signicance of the coefficient's p-values and improved R-squared value of `r round(summary(fit_1b)$r.squared, 4)`. The original regressor, 'metro' is not very significant and could be dropped, but is retained per the exercise requirement.
+
+##   1b.3. Plot the model to look for deviations from modeling assumptions
+
+The residual plots show there are still a few outliers skewing the fit. Dropping 'metro' would improve it.
+
+```{r ex1b_3, echo=T, message=F, warning=F}
+par(mar = c(4, 4, 2, 2), mfrow = c(2, 2))    # 2x2 plot array
+plot(fit_1b)                                 # all summary plots
+```
+
+## 1b.4.  Is this model significantly better than the model with 'metro' as the only predictor?
+
+Per the anova results below the added complexity of 2 addition degrees of freedom to the fit is a significant improvement as shown by the high F-statistic value and very low p-value.
+
+```{r ex1b anova, echo=T, message=F, warning=F}
+# ANOVA analyis shows a significant improvement by adding toxic and green to the model
+# with avery small p-value.
+anova(fit_1a, fit_1b)
+```
+
+
+# Exercise 2: interactions and factors
+
+**Requirements:**
+
+Using the states data set:
+
+>1. Add onto the regression equation that you created in exercise 1 by generating an interaction term and testing the interaction.
+2. Try adding region to the model. Are there significant differences across the four regions?
+
+
+## 2.1. Add onto the regression equation that you created in exercise 1 by generating an interaction term and testing the interaction.
+
+The model below adds 'green' as an interaction term with metro. From the fit summary it's seen that 'green' is a significant contributor based the the very low p-value of metro:green.
+
+```{r ex2_1, echo=T, message=F, warning=F}
+# Add the interaction of 'green' to the Ex.1 model.
+fit_2a <- lm(energy ~ metro*green,           # regression formula
+             data=na.omit(states.data))      # data set, excluding "NA"s.
+coef(summary(fit_2a))                        # show regression coefficients table
+```
+
+## 2.2. Try adding region to the model. Are there significant differences across the four regions?
+
+In order to explore the model dependencies on the different regions relative to both intercept and slope, the model being fit is energy ~ metro * region. The summary then shows the effect of regionN.East, regionSouth and regionMidwest on the intercept relative to region = "West". Likewise, metro:regionN.East, metro:regionSouth and metro:regionMidwest show the effect of the slope relative to region = "West". In order to make sense of the summary results the independent fits for energy vs metro by region is also plotted below. 
+
+From the summary table it's shown that the base model of 'energy' = slope\*(region="West") + Intercept is:
+
+> energy = -3.230079\*(region="West") + 569.531602
+
+The values for the other three regions are the relative offset of the Intercept. So for example, for region="regionN.East" the slope is -3.230079 + 3.038319 and the intercept is 569.531602 - 306.217470. It's easier to interpret by inspecting the plot of energy vs. metro by region below. From the plot it's clear that the West has a strong inverse relationship between energy and metro while for the N.East the dependence is nearly flat with a considerably smaller energy consumption at low metro populations. The South and Midwest are between these extremes.
+
+```{r ex2_2, echo=T, message=F, warning=F}
+# make sure R knows region is categorical
+str(states.data$region)                      # "West" is the ref. level
+states.data$region <- factor(states.data$region)
+
+#Add 'region' to the model
+fit_2b <- lm(energy ~ metro * region,        
+             data=na.omit(states.data))      # data set, excluding "NA"s.
+coef(summary(fit_2b))                        # show regression coefficients table
+
+# Plot model fits by region
+qplot(x = metro, y = energy, color = region, data = na.omit(states.data)) +
+  stat_smooth(method = "lm", se = FALSE, fullrange = TRUE) +
+  scale_x_continuous(limits = c(0,125), breaks = c(0,25,50,75,100,125))
+```
