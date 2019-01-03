@@ -1,0 +1,480 @@
+---
+title: "Into to Data Science - Capstone Project (Data Wrangling)"
+author: "John Campi"
+date: "Nov. 12, 2018"
+output:
+  html_document:
+    highlight: tango
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    highlight: tango
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+linkcolor: blue
+geometry: left=2.5cm,right=2.5cm,top=2cm,bottom=2cm
+citecolor: blue
+urlcolor: blue
+fig_caption: true
+---
+
+```{r setup, include=F}
+knitr::opts_chunk$set(echo = T)
+
+# Set options.
+options(max.print=200)
+```
+\pagebreak
+
+```{r initialization, echo=F, message=F, warning=F, results='hide'}
+# load required libraries
+library(naniar, warn.conflicts=F, quietly=T)
+library(dplyr, warn.conflicts=F, quietly=T)
+library(tidyr, warn.conflicts=F, quietly=T)
+library(ggplot2, warn.conflicts=F, quietly=T)
+library(simputation)
+library(mice)
+library(RColorBrewer)
+library(smotefamily)
+
+# Set control flags. Prior saved data uses when set to "F".
+imputeFlag <- F     # run new imputation of missing data? (T/F)
+smoteFlag  <- T     # run new class rebalancing? (T/F)
+pcaFlag    <- F     # run new principle component analysis? (T/F)
+
+# Constants
+varUnique  <-  1.0  # %(#unique values) per variable. 
+maxMissing <- 10.0  # max. permitted %missing per variable.
+```
+
+```{r define functions, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# Function that plots n x n matrices of distribution density plots for 
+# selected variables.
+#   - data        dataset name
+#   - plotVars    vector of variable names to be plotted
+#   - factorBy    vector of factor variable names for overplotting (default="")
+#   - plotDim     # of plots per side (plotDim x plotDim matrix, default=1)
+#   - nStart      starting variable plot (default=1)
+#   - nPlot       max # of plots, default is plot all variables (defaults to all)
+#   - nBins       # of bins per plot (default=100)
+#   - xScale      logarithmic="log10" else linear (default)
+#   - numXaxes     > 1: plot linear & log x-axes, o.w. follow xScale (default)
+#-----------------------------------------------------------------------
+distMatrix <- function(data, plotVars, factorBy="", plotDim=1, nStart=1, nPlot=length(plotVars)-nStart+1, 
+                       nBins=100, xScale="lin", numXaxes=1, title="") {
+
+    nPlotFrames <- ceiling(nPlot/plotDim^2)                        # total # of plot frames
+    firstVar <- nStart                                             # variable # in 1st plot position
+    if (xScale == "lin") {
+        titleInit = if (title=="") {"Density vs. Var"} else {title}
+    } else {
+        titleInit = if (title=="") {"Density vs. log(Var)"} else {title}
+    }
+    
+    print(paste("nPlot =", nPlot, "nPlotframes=", nPlotFrames))
+    
+    for (n in 1:nPlotFrames) {
+        lastVar = min(firstVar + plotDim^2 - 1, length(plotVars))  # variable # in last plot position
+
+        for (m in 1:numXaxes) {  
+            if (m > 1) {
+                data[plotVars[firstVar:lastVar]] <- abs(data[plotVars[firstVar:lastVar]])          # density vs. log10[abs(var)]
+                #data[data == 0] <- 1e-15                          # clean log(0) issue
+                if (data[plotVars[firstVar:lastVar]] == 0) {data[plotVars[firstVar:lastVar]] <- 1e-15}
+                
+                title = "Density vs. log(Var)"
+            } else {title = titleInit}
+          
+            if (factorBy == "") {                                  # no factoring
+                print(data %>%
+                    select( plotVars[firstVar:lastVar]) %>%
+                      gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
+                      ggplot(aes(x=value)) +
+                        geom_histogram(aes(y = ..density..), 
+                                       bins = nBins,
+                                       position = "identity",
+                                       alpha = 0.8,
+                                       color = "blue") +
+                        geom_density(alpha = 0.4) +
+                        facet_wrap(~ var, scales = "free") +
+                        ggtitle(title) +
+                        if (xScale == "log10" | m > 1) {scale_x_log10()}
+                ) #end print
+            } else {                                               # with factoring
+                print(data %>%
+                    select( factorBy, plotVars[firstVar:lastVar]) %>%
+                      gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
+                      ggplot(aes(x=value, color=!! sym(factorBy), fill=!! sym(factorBy))) +
+                        geom_histogram(aes(y = ..density..), 
+                                       bins = nBins,
+                                       #position = "identity",
+                                       position = "dodge",
+                                       alpha = 0.1)  + 
+                        geom_density(size=1, fill=NA, alpha = 0.1) +
+                        theme_bw() +
+                        #scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9")) +
+                        #scale_color_brewer(palette="Set1", type="div") +    # colors
+                        #scale_fill_brewer(palette="Dark2", type="div") + # fill
+                        facet_wrap(~ var, scales = "free") +
+                        ggtitle(title) +
+                        if (xScale == "log10" | m > 1) {scale_x_log10()}
+                ) #end print
+            }#end if (factorBy == "")
+            
+            print(paste("Plotting", firstVar, "through", lastVar))
+            
+        } #end for (m in 1:numXaxes)
+        
+        firstVar <- lastVar + 1                                    # 1st plot variable in next frame
+        
+        print(paste("firstVar at end of n loop =", firstVar))
+        
+    } #end for (n in 1:nPlotFrames)
+} #end function
+```
+
+# Project Overview 
+
+## What is the problem this project addresses?
+Identify the key instrument sensors of a semiconductor manufacturing line and model the alarm conditions for potential chip failures. 
+
+## Who is your client and why do they care about this problem? In other words, what will your client DO or DECIDE based on your analysis that they wouldn't have otherwise?
+This capability would be sought out by any semiconductor manufacturer who wants to maximize their yield. Currently wafers are tested after specific process levels are completed. Much of the critical testing can't be performed until very far along in the manufacturing process. Thus a failure early in the process will consume costly resources as the wafer continues onto other fabrication steps, only to be junked at the end. If statistical sampling is used then there's also the added risk of failing chips shipping to customers.Having the ability to catch failures in almost real time during any process step minimized the chance of failure propagation and improves isolation time of equipment issues thereby greatly improving yield.
+
+## What data are you going to use for this? How will you acquire this data?
+[**SECOM Data Set**](http://archive.ics.uci.edu/ml/datasets/secom)
+
+* Dataset is comprised of 1567 observations, 591 variables, and 104 fails.
+
+## In brief, outline your approach to solving this problem.
+
+* The first step is to identify the relevant sensors and try to reduce the number of variables through PCM analysis.
+* Then perform regression to model the various failure conditions.
+
+## What are your deliverables? Typically, this would include code, along with a paper and/or a slide deck.
+
+* A report describing the methodology and model. The R program can be included as an appendix.
+* A slide show presenting the overall procedure and benefits.
+
+\pagebreak
+
+# Data Wrangling
+
+## Data Wrangling - Summary of Approach.
+
+* Assemble csv files and update variables as needed.
+* Remove irrelevant variables.
+* Classify all missing data as "NA".
+* Impute missing data.
+
+## Assemble Initial Dataset.
+
+```{r raw data, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# Assemble Initial Dataset
+#-----------------------------------------------------------------------
+# Pass/fail data (Status = -1 => pass, 1 => fail).
+path_in <- file.path("Data", "secom_labels.data")
+secom_labels <- read.delim(path_in, header=F, sep=" ")
+names(secom_labels) <- c("Status", "Date")
+#secom_labels$Status <- as.factor(secom_labels$Status)             # update Status to factor with
+#levels(secom_labels$Status) <- c("pass","fail")                   # pass=1, fail=2
+secom_labels <- separate(secom_labels, col="Date", into=c("Date", "Time"), sep=" ")
+
+# Sensor data.
+path_in <- file.path("Data", "secom.data")
+secom <- read.delim(path_in, header=F, sep=" ")                    # sensor data
+secom <- cbind(secom_labels, secom)                                # P/F data
+
+numVarsInit = round(length(names(secom)), 0)
+numMissInit = round(n_miss(secom), 0)
+```
+
+The [SECOM Data Set](http://archive.ics.uci.edu/ml/datasets/secom) consists of two csv files. The first is a list of pass/fail and date/time results, one entry per lot run, and the other contains the corresponding continuous numeric results of sensor readings from a semiconductor manufacturing line. The data files do not contain a header so variable names Status, Date, and Time were assigned for pass = -1 / fail= +1, date and time. The remaining variables assumed default names: V1, V2, etc. Table 1 below shows a sampling of the initial dataset. Since the sensor variables are not named there is no way to attribute a meaning to the sensor readings so I will take the "black box" approach to analysis. 
+```{r wrangling table, echo=F, warning=F, message=F}
+knitr::kable(secom[1:5,1:7], caption = 'Table 2.1: Sampling of the SECOM dataset.')
+```
+
+## Initial Cleanup
+
+```{r initial cleanup, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# Initial cleanup.
+#-----------------------------------------------------------------------
+# Remove variables with no distribution or < 1% unique values.
+flagged <- c(NULL)                                                 # init. vector of flagged var. #s
+for (n in 4:length(secom)) {
+    if ((min(secom[n], na.rm=T) == max(secom[n], na.rm=T)) |
+          (100*nrow(unique(secom[n]))/nrow(secom[n]) < varUnique)) {  # test for dist. and min. % of unique values
+        print(paste("Dist. Filter: Variable ", names(secom[n])," dropped"))
+        flagged <- c(flagged,-n)                                   # non-dist. variable columns
+    }
+}
+secom_clean <- secom[flagged]                                      # new WIP dataset
+
+# Consolodate all missing values to NA.
+replace_with_na_all(data = secom_clean, condition = ~.x %in% c("N/A", "missing", "na", " "))
+
+# Convert all NaN values to NA
+secom_clean[is.na(secom_clean)] <- NA
+
+#-----------------------------------------------------------------------
+# Characterize extent of missing data.
+#-----------------------------------------------------------------------
+# Total missing values.
+pctMissingInit <- round(100*n_miss(secom_clean)/(ncol(secom_clean)*nrow(secom_clean)), digits=2)
+paste("Initially missing",pctMissingInit,"% of the total data.")
+
+
+# Remove variables with more than 10% missing observations.
+#secom_clean <- secom_clean[(1.0 - colSums(is.na(secom_clean))/nrow(secom_clean))*100 >= 90]
+secom_clean <- secom_clean[100*colSums(is.na(secom_clean))/nrow(secom_clean) < maxMissing]
+
+pctMissing <- round(100*n_miss(secom_clean)/(ncol(secom_clean)*nrow(secom_clean)), digits=2)
+paste("Need to impute remaining",pctMissing,"% of the missing total data.")
+
+#-----------------------------------------------------------------------
+# WIP dataset. 
+#-----------------------------------------------------------------------
+secom_wip <- secom_clean                                           # start & end each section with this df
+
+```
+
+Sensor data are continuous, real values by nature. So any variable that contains only missing data or has no variation is irrelevant for this analysis and can be dropped. The approach taken here was to drop all variables where min = max. It's not clear why these data were included in the SECOM dataset, but since the goal is to identify signals or combinations of signals leading to an alarm condition, unvarying sensor data are irrelevant. The next important issue with the dataset was to properly classify all missings as "NA". Missing results can be defined by a number of non-standard labels including "N/A", "missing", "na" or even " ". The naniar package provides a simple function replace_with_na_all() to simplify converting this arbitrary list of labels to "NA". Finally, there were a number of "NaN" designations that aren't typically interpreted as missings, but since the sensor data should be continuous real values it was determined these values should be treated as "NA". It was found that initially `r pctMissingInit`% of the dataset was missing. While that doesn't seem to be too significantly large, it depends on how missingness is distributed within the dataset. Among the many useful features of the naniar package are plotting routines for visually exploring missingness. One of the routines gg_miss_var() is shown below in Figure 1 in which the variables are ordered by total missingness and plotted on the y-axis, and the number of missing observations on the x-axis. The number variables in this dataset is too large for printing so are omitted from the y-axis. The notable takeaway here was that most of the missing data was limited to a relatively few number of variables. The safe approach taken was to drop all variables with > `r maxMissing`% missing data leaving just `r pctMissing`% total missing data for imputation.
+
+```{r initial missings visual, echo=F, warning=F, message=F, results='hide', out.width='90%', fig.align='center', fig.cap='Fig. 2.1: Visualization of initial missingness.'}
+#-----------------------------------------------------------------------
+# Visualize extent of missing data.
+#-----------------------------------------------------------------------
+# naniar visualize initial missing data.
+gg_miss_var(secom) +
+  theme(axis.text.y = element_text(color = "white", size = 2))
+#vis_miss(secom_clean, cluster = T, sort_miss = T)
+#gg_miss_which(secom_clean)
+#gg_miss_fct(secom_clean, fct=Status)
+```
+
+## Imputation
+
+```{r mice imputation, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# Imputation: MICE
+#-----------------------------------------------------------------------
+dataSet <- secom_wip  #[1:50]  # Useful for limiting data for debug.
+secom_shadow <- dataSet %>%
+  bind_shadow() %>%
+  add_label_shadow() 
+
+# Extract naniar shadow matrix.
+secom_shadow <- secom_shadow[grepl("_NA$",names(secom_shadow)) |  grepl("any_missing",names(secom_shadow))]
+
+# Once imputed values are final set imputeFlag=F to read them from file.
+if (imputeFlag) {    # set flag in setup chunk
+    # Update prediction matrix.
+    ini <- mice(dataSet, maxit=0, print=F)
+    pred <- ini$pred
+    pred[,c("Status","Date","Time")] <- 0                                   # vars not used as predictors
+
+    secom_imp <- dataSet %>%
+      #mice(m=1, method="norm",         pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="norm.predict", pred=pred, maxit = 1, seed=100) %>%
+      mice(m=1, method="norm.nob",     pred=pred, maxit = 1, seed=100) %>%
+      complete(1) 
+    
+    # Save imputed dataset for later use.
+    path_out <- file.path("Data", "secom_imp.csv")
+    write.csv(secom_imp, path_out)
+} else {
+    path_in <- file.path("Data", "secom_imp.csv")
+    secom_imp <- read.csv(path_in, stringsAsFactors=F) 
+    secom_imp <- within(secom_imp, rm(X))                          # drop extra variable    
+    #secom_imp$Status <- as.factor(secom_imp$Status)
+} #end if (imputeFlag)
+
+paste("There are", n_miss(secom_imp), "missing values remaining.")
+
+# Merge data with shadow matrix.
+secom_imp_bound <- cbind(secom_imp, secom_shadow)
+dataSet_bound <- cbind(dataSet, secom_shadow)
+bound_data <- bind_rows(original = dataSet_bound,
+                        imputed = secom_imp_bound,
+                        .id = "data_type")
+
+# Final Stats
+numVars = length(names(secom_imp))
+numMiss = n_miss(secom_imp)
+
+#-----------------------------------------------------------------------
+# WIP dataset. 
+#-----------------------------------------------------------------------
+secom_wip <- secom_imp                                           # start & end each section with this df
+
+```
+
+There are several R packages for imputing data. Initially, the [simputation](https://cran.r-project.org/web/packages/simputation/index.html) package was chosen for it's ease of use and integration with naniar and ggplot2. Unfortunately, the number of variables in this dataset created multiple run-time issues for the simputation engine so it had to be abandoned. Instead, the [mice package ](https://cran.r-project.org/web/packages/mice/index.html), which stands for "Multivariate Imputation by Chained Equations", provided powerful fitting functionality at a moderate computation cost. The package is capable of fitting a different imputation model to each variable, but the norm.nob method was applied unilaterally and found to return reasonably good values on comparing pre- and post-imputation distributions. Figure 2 show a sample distribution for a random variable overlaying the imputed values in the histogram. A summary of the initial imputation effort is shown in Table 1. 
+
+```{r sample imputed distribution, echo=F, warning=F, message=F, results='hide', out.width='75%', fig.align='center', fig.cap='Fig. 2.2: Example distribution before and after imputation'}
+# Review results.
+sensorVars <- names(dataSet)[grepl("^V",names(dataSet)) & !grepl("_NA$",names(dataSet))]
+distMatrix(bound_data, plotVars=sensorVars, factorBy="data_type", plotDim=1, nStart=1, nPlot=1, nBins=200, numXaxes=1)
+```
+
+```{r wrangling summary table, echo=F, warning=F, message=F, out.width='40%'}
+
+Metric <- c("# of Variables", "# of Observations", "% Missings")
+Initial <- c(as.integer(numVarsInit), as.integer(nrow(secom)), round(100*numMissInit/(numVarsInit*nrow(secom)), 2))
+Final <- c(as.integer(numVars), as.integer(nrow(secom_wip)), round(100*numMiss/(numVars*nrow(secom_wip)), 2))
+wrangled <- data.frame(Metric, Initial, Final)
+
+knitr::kable(wrangled, caption = 'Table 2.2: Summary of data wrangling.')
+```
+
+# Data Exploration
+
+## Sensor Data Distributions
+
+An important requirement for developing a multivariate model for this project is how well the individual sensor data distributions can be modeled by a known statistical distribution type. Ideally each variable would follow the well known normal distribution. The figure below shows an example of one variable in secom dataset that is roughly normal based on visual inspect of the probability density (PDF) distribution. Included below that is its corresponding Q-Q plot, or quantile plot, which plots the measured versus theoretical quantile data. For an ideal normal distribution the fit line of a Q-Q plot would have very small residuals over the entire +3/-3 z-score range. The farther the fit line deviates from data the less confident we can be that the distribution is normal. A reasonable target is that at least 95% of the data fits the distribution which corresponds to a good fit between z = -1.96 to +1.96. Since the goal of the model in this project is predict physical wafers failures based on production sensor data, the distribution is also shown comparing data for this sensor for passing and failing wafers. Except for differences in the tails, there's very little distinction between the distributions. Since it's not known if the differences in the tail data is important or not, the apparent outliers will not be removed from the analysis yet.The second set of plots below show the data for another sensor which also follows a normal distribution, but comparison of yield results shows differences in both the peak probability and tail distribution. 
+
+
+```{r plot Var1 density, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.1: Example of near normal distributions.'}
+# Copy of data for plotting.
+plot_data <- secom_wip
+sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
+plot_data$Yield <- as.factor(plot_data$Status)
+levels(plot_data$Yield) <- c("pass", "fail")
+
+#Density Plots
+distMatrix(plot_data, plotVars="V2",                   plotDim=1, nStart=1, nPlot=1, nBins=100, title="Density Plot for All 'V2' Data")
+distMatrix(plot_data, plotVars="V2", factorBy='Yield', plotDim=1, nStart=1, nPlot=1, nBins=100, title="Density Plot for 'V2' by Yield")
+
+# Q-Q Plots
+ggplot(plot_data, aes(sample=V2)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for All 'V2' Data")
+
+ggplot(plot_data, aes(sample=V2, color=Yield)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5) +
+  ggtitle("Q-Q Plot for 'V2' by Yield")
+```
+
+
+```{r plot Var3 density, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.2: Example of near normal distributions with yield differences.'}
+
+# Density Plots
+distMatrix(plot_data, plotVars="V3",                   plotDim=1, nStart=1, nPlot=1, nBins=100, 
+           title="Density Plot for All 'V3' Data")
+distMatrix(plot_data, plotVars="V3", factorBy='Yield', plotDim=1, nStart=1, nPlot=1, nBins=100, 
+           title="Density Plot for 'V3' by Yield")
+
+# Q-Q Plots
+ggplot(plot_data, aes(sample=V3)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for All 'V3' Data")
+
+ggplot(plot_data, aes(sample=V3, color=Yield)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5) +
+  ggtitle("Q-Q Plot for 'V3' by Yield")
+```
+
+
+What happens then for data that do not exhibit a normal distribution? The figure below shows the case for a right-skewed distribution at the top left with corresponding Q-Q plot below it. The longer right tails is clear in the PDF plot but really stands out in the Q-Q plot where the trend sharply deviates near z = +1. For distributions like this one the plan is to transform the original data into a form that is closer to normal. The plots on the right side show the result after taking the logarithm of the sensor values. The effect is seen as rebalancing the distribution, making it more symmetric about the mean. There are many non-normal distribution types available for custom fitting these data, but the approach that will be taken here will be to apply logarithmic transform, or shift + transform. The problematic situation is when the data do not follow any single distribution type but is comprised of a superposition of two or more component distributions. The second set of plots below show examples of multi-modal sensor distributions. This data could be fit with a superposition of distributions, but review of the Q-Q plots shows that a normal distribution can describe the over distribution adequately. In this project then, multi-modal distributions will be approximated by a normal or log-normal distribution as best fits the data.
+
+
+```{r plot log density, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.3: Example skewed distribution.'}
+
+# Density Plots (linear and log scales)
+distMatrix(plot_data, plotVars="V65", plotDim=1, nStart=1, nPlot=1, nBins=100, numXaxes = 2)
+
+# Q-Q Plot
+ggplot(plot_data, aes(sample=V65)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for 'V65'")
+# Q-Q Plot
+ggplot(plot_data, aes(sample=log(V65))) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for All log('V65')")
+```
+
+```{r plot multi-mode density, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.4: Example multi-modal distributions.'}
+
+distMatrix(plot_data, plotVars="V22", factorBy='Yield', plotDim=1, nStart=1, nPlot=1, nBins=100,
+           title="Bi-Modal Distribution")
+distMatrix(plot_data, plotVars="V52", factorBy='Yield', plotDim=1, nStart=1, nPlot=1, nBins=100,
+           title="tri-Modal Distribution")
+
+# Q-Q Plot
+ggplot(plot_data, aes(sample=V22)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for 'V22'")
+# Q-Q Plot
+ggplot(plot_data, aes(sample=V55)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for 'V55'")
+
+```
+
+```{r explore distributions, echo=F, warning=F, message=F, results='hide', out.width='100%', fig.align='center', fig.cap='Example distributions.'}
+#distMatrix(plot_data, plotVars=sensorVars, factorBy='Yield', plotDim=3, nStart=1, nPlot=72, nBins=100, numXaxes=1)
+```
+
+## Correlation Analysis
+
+A scatter plot is good way to assess relationships between pairs of variables. The more that the data trends with a positive slope between 0 and 1 the more the two variables are correlated. Oppositely, the more the data trends with a negative sloe between -1 and the more the two variables are anti-correlated. If building a model with a few variables this is a convenient way to identify the relevant features. The example scatter plot matrix below shows the relationships between the first ten variables in the secom dataset. To simplify the visual analysis a correlation plot is shown below the scatter plot matrix. The correlation plot reduces the information in the scatter plot to a correlation coefficient (slope) and color codes the results for easy identification of trends. In a dataset with hundreds of variables these visual aids aren't as useful. The third figure below shows the case for the current secom dataset. The plot does show interesting clustering trends but this amount of data is too cumbersome to perform visual analyses. The approach that will be taken here initially is to select features based on their statistical significance in a given model.
+
+```{r scatter plot example, echo=F, message=F, warning=F, results='hide', out.width='90%', fig.align='center', fig.cap='Fig. 3.5: Example scatter plot matrix.'}
+#-----------------------------------------------------------------------
+# Scatter Plot Matrix
+#-----------------------------------------------------------------------
+library(corrplot)
+dataSet <- secom_wip[3:12]                                       # Useful for limiting data for debug.
+dataSet[c('Date','Time','Yield')] <- c(NULL)
+
+plot(dataSet)
+```
+
+
+```{r correlation example, echo=F, message=F, warning=F, results='hide', out.width='90%', fig.align='center', fig.cap='Fig. 3.6: Example correlation plot.'}
+#-----------------------------------------------------------------------
+# Correlation
+#-----------------------------------------------------------------------
+corr_data <- cor(dataSet)
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(corr_data, method="color", col=col(200), type="upper", order="original", addCoef.col = "black", diag=FALSE, 
+         tl.cex=0.75, tl.col="black", tl.srt=45) 
+
+```
+
+
+```{r correlation matrix, echo=F, message=F, warning=F, results='hide', out.width='100%', fig.align='center', fig.cap='Fig. 3.7: Correlation plot for the secom dataset.'}
+#-----------------------------------------------------------------------
+# Correlation
+#-----------------------------------------------------------------------
+library(corrplot)
+dataSet <- secom_wip #[1:50]                                       # Useful for limiting data for debug.
+dataSet[c('Date','Time','Yield')] <- c(NULL)
+
+corr_data <- cor(dataSet)
+#corr_data <- cor(fit_lm$model)
+
+# correlogram with hclust reordering
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot(corr_data, method="color", col=col(200), type="upper", order="original", diag=FALSE, 
+         tl.cex=0.05, tl.col="black", tl.srt=45) 
+
+```
+
