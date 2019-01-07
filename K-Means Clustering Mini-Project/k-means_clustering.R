@@ -36,9 +36,6 @@ df <- scale(wine)                   # normalize variables and save to new df
 
 wssplot <- function(data, nc=15, seed=1234){
 	             wss <- (nrow(data)-1)*sum(apply(data,2,var))
-	             print(paste("apply(data,2,var) = ", apply(data,2,var)))
-	             print(paste("sum(apply(data,2,var)) = ", sum(apply(data,2,var))))
-	             print(paste("wss = ", wss))
                for (i in 2:nc){
 		               set.seed(seed)
 	                 wss[i] <- sum(kmeans(data, centers=i)$withinss)
@@ -61,12 +58,14 @@ wssplot(df)
 
 # The last significant kink occurs at 3 so suggests to use 3 clusters.
 #
-# The total variance (SST) = within group variance (SSW) + between group variance (SSB).
-# Since SST is fixed for a given data set, SSW and SSB are affected by how the data is
-# grouped or clustered. This method works then by increasing the subdivision of data into  
-# more and more clusters thereby reducing the variance within a given group, SSW, and increasing  
-# the between group variance, SSB. Eventually further subdivision leads to marginal changes in 
-# the within group variance. The last largest change in SSG signifies an adequate number of clusters.
+# Total variance = within group variance + between group variance. Ignoring normalizing by
+# sample count, the total sum of squares (SST) = within group sum of squares (SSW) + between group 
+# sum of squares (SSB). Since SST is fixed for a given data set, SSW and SSB are affected by how 
+# the data is grouped or clustered. As SSW decreased, SSB increased. This method works then by 
+# increasing the subdivision of data into more and more clusters thereby reducing the variance within 
+# a given group, SSW, and increasing the between group variance, SSB. Eventually further subdivision 
+# leads to marginal changes in SSW. The last significant change in SSW signifies an adequate number 
+# of clusters.
 
 ##########################
 ### End John's Input   ###
