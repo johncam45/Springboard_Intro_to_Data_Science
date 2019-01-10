@@ -620,7 +620,7 @@ corrplot(corr_data, method="color", col=col(200), type="upper", order="original"
 \newline
 &nbsp;
 
-While the number of cross-correlations makes visual analysis cumbersome in general, it is still interesting to review how each variable is correlated to the dependent variable, 'Status'. Fig. 3.9 plots the SECOM variables ordered by their correlation coefficient with 'Status'. The notable takeaway is that none of the individual variables is signficantly correlated with the ouput response meaning that the final model should expect to retain a significant number of the dependent variables. 
+While the number of cross-correlations makes visual analysis cumbersome in general, it is still interesting to review how each variable is correlated to the dependent variable, 'Status'. Fig. 3.9 plots the SECOM variables ordered by their correlation coefficient with 'Status'. The notable takeaway is that none of the individual variables is signficantly correlated with the ouput response meaning that the final model should expect to retain a significant number of independent variables. 
 
 \newline
 &nbsp;
