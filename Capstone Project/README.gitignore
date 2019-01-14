@@ -1,11 +1,27 @@
 Summary of Files
 
-1. README.txt: This file.
-2. 1_Capstone_Project_Proposal.html..................Initial capstone proposal submission.
-3. 1_Capstone_Project_Proposal.Rmd...................Rmarkdown file used to generate proposal document.
-4. 2_Capstone_Project__Data_Wrangling.pdf............Data wrangling milestone submission.
-5. 2_Capstone_Project__Data_Wrangling.Rmd............Rmarkdown file used to generate milestone document. 
-6. 3_Capstone_Project__Statistical_Analysis.html.....Statistical analysis milestone submission.
-7. 3_Capstone_Project__Statistical_Analysis.Rmd......Rmarkdown file used to generate statistical analysis milestone submission.
-8. 4_Capstone_Project__Data_Story.html...............Data story milestone submission.
-9. 4_Capstone_Project__Data_Story.Rmd................Rmarkdown file used to generate data story milestone submission
+ 1. README.txt: This file.
+ 2. 1_Capstone_Project_Proposal.html..................Initial capstone proposal submission.
+ 3. 1_Capstone_Project_Proposal.Rmd...................Rmarkdown file used to generate proposal document.
+ 4. 2_Capstone_Project__Data_Wrangling.pdf............Data wrangling milestone submission.
+ 5. 2_Capstone_Project__Data_Wrangling.Rmd............Rmarkdown file used to generate milestone document. 
+ 6. 3_Capstone_Project__Statistical_Analysis.html.....Statistical analysis milestone submission.
+ 7. 3_Capstone_Project__Statistical_Analysis.Rmd......Rmarkdown file used to generate statistical analysis milestone submission.
+ 8. 4_Capstone_Project__Data_Story.html...............Data story milestone submission.
+ 9. 4_Capstone_Project__Data_Story.Rmd................Rmarkdown file used to generate data story milestone submission.
+10. Data/secom.data...................................Original SECOM dataset.
+11. Data/secom.names..................................Original SECOM dataset.
+12. Data/secom_labels.data............................Original SECOM dataset.
+13. Data/secom_imp.csv................................Imputed dataset.
+14. Data/secom_smote.csv..............................Class balanced dataset.
+
+
+Comments:
+To download html files without having to download the intire repository:
+* Please click on the file's hyperlink. 
+* When the Github viewing page opens it states that the file is too large to display. 
+* Proceed to click "Download". 
+* Depending on the browser used it will either download or open an html formatted page in a new tab. 
+* If the latter, right click anywhere on the page and select "Save as...". 
+* Save the file to your local drive
+* Locate the file in your file explorer then double-click on it to open the file in your default browser.
