@@ -1,0 +1,1275 @@
+---
+title: "Into to Data Science - Capstone Project (Data Story)"
+author: "John Campi"
+date: "Nov. 12, 2018"
+output:
+  html_document:
+    highlight: tango
+    number_sections: yes
+    theme: united
+    toc: yes
+    toc_depth: 3
+    toc_float:
+      collapsed: yes
+      smooth_scroll: yes
+  pdf_document:
+    highlight: tango
+    number_sections: yes
+    toc: yes
+    toc_depth: 3
+linkcolor: blue
+geometry: left=2.5cm,right=2.5cm,top=2cm,bottom=2cm
+citecolor: blue
+urlcolor: blue
+fig_caption: true
+---
+
+```{r setup, include=F}
+knitr::opts_chunk$set(echo = T)
+
+# Set options.
+options(max.print=2500)
+#options(na.action = "na.exclude")
+```
+\pagebreak
+
+```{r initialization, echo=F, message=F, warning=F, results='hide'}
+# load required libraries
+library(dplyr, warn.conflicts=F, quietly=T)         # data wrangling
+library(tidyr, warn.conflicts=F, quietly=T)         # data wrangling
+library(ggplot2, warn.conflicts=F, quietly=T)       # plotting
+library(knitr, warn.conflicts=F, quietly=T)         # tables
+library(kableExtra, warn.conflicts=F, quietly=T)    # tables
+library(naniar, warn.conflicts=F, quietly=T)        # missing data analysis
+#library(simputation, warn.conflicts=F, quietly=T)
+library(mice, warn.conflicts=F, quietly=T)          # imputation
+#library("ImputeRobust")
+#library("gamlss")
+library(RColorBrewer, warn.conflicts=F, quietly=T)  # for plotting
+library(smotefamily, warn.conflicts=F, quietly=T)   # class rebalancing
+library(corrplot, warn.conflicts=F, quietly=T)      # correlation heatmap
+library(Hmisc, warn.conflicts=F, quietly=T)         # correlation analysis
+library(caTools, warn.conflicts=F, quietly=T)       # training testset split
+library(arm, warn.conflicts=F, quietly=T)           # bayesglm
+library(randomForest, warn.conflicts=F, quietly=T)  # random forest
+library(caret, warn.conflicts=F, quietly=T)         # Classification and Regression Training
+
+#  Set control flags. Prior saved data uses when set to "F".
+transformFlag <- T  # run distribution transforms? (T/F)
+imputeFlag <- F     # run imputation of missing data? (T/F)
+smoteFlag  <- T     # run class rebalancing? (T/F)
+pcaFlag    <- F     # run principle component analysis? (T/F)
+
+# Constants
+varUnique  <-  1.0  # min.% unique values per variable
+maxMissing <- 10.0  # max.% missing per variable
+threshold <- 0.5    # level threshold for dependent variable Status
+maxSig <- 0.05      # max feature significance criteria for regression 
+set.seed(123)
+```
+
+
+```{r define functions, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# distMatrix
+#-----------------------------------------------------------------------
+# Function that plots n x n matrices of distribution density plots for 
+# selected variables.
+#   - data        dataset name
+#   - plotVars    vector of variable names to be plotted
+#   - factorBy    vector of factor variable names for overplotting (default="")
+#   - plotDim     # of plots per side (plotDim x plotDim matrix, default=1)
+#   - nStart      starting variable plot (default=1)
+#   - nPlot       max # of plots, default is plot all variables (defaults to all)
+#   - nBins       # of bins per plot (default=100)
+#   - xScale      logarithmic="log10" else linear (default)
+#   - numXaxes     > 1: plot linear & log x-axes, o.w. follow xScale (default)
+#-----------------------------------------------------------------------
+distMatrix <- function(data, plotVars="", factorBy="", plotDim=1, nStart=1, nPlot=length(plotVars)-nStart+1, 
+                       nBins=100, xScale="lin", numXaxes=1, title="", QQplot=FALSE) {
+
+    nPlotFrames <- ceiling(nPlot/plotDim^2)                        # total # of plot frames
+    firstVar <- nStart                                             # variable # in 1st plot position
+    if (xScale == "lin") {
+        titleInit = if (title=="") {"Density vs. Var"} else {title}
+    } else {
+        titleInit = if (title=="") {"Density vs. log(Var)"} else {title}
+    }
+    
+    print(paste("nPlot =", nPlot, "nPlotframes=", nPlotFrames))
+
+    for (n in 1:nPlotFrames) {
+        lastVar = min(firstVar + plotDim^2 - 1, length(plotVars))  # variable # in last plot position
+
+        for (m in 1:numXaxes) { 
+            if (m > 1) {
+                data[plotVars[firstVar:lastVar]] <- abs(data[plotVars[firstVar:lastVar]])          # density vs. log10[abs(var)]
+                #data[data == 0] <- 1e-15                          # clean log(0) issue
+                if (data[plotVars[firstVar:lastVar]] == 0) {data[plotVars[firstVar:lastVar]] <- 1e-15}
+                
+                title = "Density vs. log(Var)"
+            } else {title = titleInit}
+          
+            if (factorBy == "") {                                  # no factoring
+                # Density Plot
+                print(data %>%
+                    dplyr::select(plotVars[firstVar:lastVar]) %>%
+                      gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
+                      ggplot(aes(x=value)) +
+                        geom_histogram(aes(y = ..density..), 
+                                       bins = nBins,
+                                       position = "identity",
+                                       alpha = 0.8,
+                                       color = "blue") +
+                        geom_density(alpha = 0.4) +
+                        facet_wrap(~ var, scales = "free") +
+                        ggtitle(title) +
+                        if (xScale == "log10" | m > 1) {scale_x_log10()}
+                ) #end print
+              
+                if (QQplot) {
+                    # Q-Q Plot
+                    print(data %>%
+                        dplyr::select( plotVars[firstVar:lastVar]) %>%
+                          gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
+                          ggplot(aes(sample=value)) +
+                            geom_qq(size=2) +
+                            geom_qq_line(size=1.5, color="red") +
+                            facet_wrap(~ var, scales = "free") +
+                            ggtitle("Q-Q Plot")
+                    ) #end print
+                } #end if
+            } else {                                               # with factoring
+                print(data %>%
+                    dplyr::select( factorBy, plotVars[firstVar:lastVar]) %>%
+                      gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
+                      ggplot(aes(x=value, color=!! sym(factorBy), fill=!! sym(factorBy))) +
+                        geom_histogram(aes(y = ..density..), 
+                                       bins = nBins,
+                                       #position = "identity",
+                                       position = "dodge",
+                                       alpha = 0.1)  + 
+                        geom_density(size=1, fill=NA, alpha = 0.1) +
+                        theme_bw() +
+                        #scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9")) +
+                        #scale_color_brewer(palette="Set1", type="div") +    # colors
+                        #scale_fill_brewer(palette="Dark2", type="div") + # fill
+                        facet_wrap(~ var, scales = "free") +
+                        ggtitle(title) +
+                        if (xScale == "log10" | m > 1) {scale_x_log10()}
+                ) #end print
+            }#end if (factorBy == "")
+            
+            print(paste("Plotting", firstVar, "through", lastVar))
+            
+        } #end for (m in 1:numXaxes)
+        
+        firstVar <- lastVar + 1                                    # 1st plot variable in next frame
+        
+        print(paste("firstVar at end of n loop =", firstVar))
+        
+    } #end for (n in 1:nPlotFrames)
+} #end function
+
+
+#-----------------------------------------------------------------------
+# flattenCorrMatrix
+#-----------------------------------------------------------------------
+# Function that flattens the correlation and p-value matrices into a  
+# flat list.
+#   - cormat      matrix of the correlation coefficients
+#   - pmat        matrix of the correlation p-values
+#-----------------------------------------------------------------------
+flattenCorrMatrix <- function(cormat, pmat) {
+    ut <- upper.tri(cormat)
+    var1 <- var2 <- coeff <- p <- NULL
+    count <- 1
+    for (i in 1:nrow(cormat)) {
+        for (j in 1:ncol(cormat)) {
+            if (ut[i,j]) {
+                var1[count]  <- rownames(cormat)[i]
+                var2[count]  <- colnames(cormat)[j]
+                coeff[count] <- cormat[i,j]
+                p[count]     <- pmat[i,j]
+                count = count + 1
+            }
+        }
+    }
+data.frame(var1,var2,coeff,p)
+}
+```
+
+# Project Overview 
+
+## What is the problem this project addresses?
+Identify the key instrument sensors of a semiconductor manufacturing line and model the alarm conditions for potential chip failures. 
+
+## Who is your client and why do they care about this problem? In other words, what will your client DO or DECIDE based on your analysis that they wouldn't have otherwise?
+This capability would be sought out by any semiconductor manufacturer who wants to maximize their yield. Currently wafers are tested after specific process levels are completed. Much of the critical testing can't be performed until very far along in the manufacturing process. Thus a failure early in the process will consume costly resources as the wafer continues onto other fabrication steps, only to be scrapped at the end. If statistical sampling is used then there's also the added risk of failing chips shipping to customers. Having the ability to catch failures in almost real time during any process step minimizes the chance of failure propagation and improves isolation time of equipment issues thereby greatly improving yield and reducing costs.
+
+## What data are you going to use for this? How will you acquire this data?
+The date used for ths project will be the [**SECOM Data Set**](http://archive.ics.uci.edu/ml/datasets/secom) which is publicly available from UCI archive. The dataset is comprised of 1567 observations, one observation per wafer fabricated, 591 variables corresponding to various sensors in fabrication equipment, with 104 failing observations total.
+
+## In brief, outline your approach to solving this problem.
+
+* The first step is to identify any irrelevant variables to try and reduce the total number of variables in the analysis.
+* Next address missing data. 
+
+>* Any variable missing more than 10% of the total observations cannot accurately contribute to a model so will be dropped from the analysis.
+* Remaining missing data will be imputed.
+
+* Due to the asymmetry in the number of observed fails to the total number of observation, a class rebalancing technique such as Synthetic Minority Over-sampling Technique (SMOTE) will need to be applied.
+* Next split data into a training, tuning and verification set.
+* Finally, perform logistic regression on the training data to identify the key model variable, apply machine learning techniques and tune the model then verify final model accuracy and sensitivity.
+
+## What are your deliverables? Typically, this would include code, along with a paper and/or a slide deck.
+
+* The primary deliverable for this project is a categorical model, which given data from a similar fab and in the same format, could be used to predict pass/fail classes of finished wafers.
+* A report describing the methodology and model. The R program can be included as an appendix.
+* A slide show presenting the overall procedure and benefits.
+
+\pagebreak
+
+# Data Wrangling
+
+## Data Wrangling - Summary of Approach.
+
+* Assemble csv files and update variable names and format as needed.
+* Remove irrelevant variables.
+* Classify all missing data as "NA".
+* Impute missing data.
+
+## Assemble Initial Dataset.
+
+```{r raw data, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# Assemble Initial Dataset
+#-----------------------------------------------------------------------
+# Initial pass/fail data (Status = -1 => pass, 1 => fail).
+path_in <- file.path("Data", "secom_labels.data")
+secom_labels <- read.delim(path_in, header=F, sep=" ")
+names(secom_labels) <- c("Status", "Date")
+secom_labels <- separate(secom_labels, col="Date", into=c("Date", "Time"), sep=" ")
+secom_labels$Status[which(secom_labels$Status == -1)] <- 0         # convert Status=-1 --> 0='pass', 1='fail')
+
+# Sensor data.
+path_in <- file.path("Data", "secom.data")
+secom <- read.delim(path_in, header=F, sep=" ")                    # sensor data
+secom <- cbind(secom_labels, secom)                                # P/F data
+
+numVarsInit = round(length(names(secom)), 0)
+numMissInit = round(n_miss(secom), 0)
+```
+
+The [SECOM Data Set](http://archive.ics.uci.edu/ml/datasets/secom) consists of two csv files. The first is a list of pass/fail and date/time results, one entry per lot run, and the other contains the corresponding numeric results of sensor readings from a semiconductor manufacturing line. The data files do not contain a header so variable names 'Status', 'Date', and 'Time' were assigned for pass = -1 / fail = +1, date and time. The 'Status' variable is then updated to pass = 0 / fail = +1 for convenience when fitting the data to categorical models. The remaining variables assumed default names: V1, V2, etc. Table 2.1 below shows a sampling of the initial dataset. Since the sensor variables are not named in the original dataset, and since no information is provided about the physical meaning, source or process order of each sensor's data, there is no way to attribute any process or business meaning to the data. Therefore the analysis herein will take a "black box" approach. 
+
+```{r wrangling table, echo=F, warning=F, message=F}
+kable(secom[1:5,1:7], caption = 'Table 2.1: Sampling of the SECOM dataset.') %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+\newline
+&nbsp;
+
+## Initial Cleanup
+
+```{r initial cleanup, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# Initial cleanup.
+#-----------------------------------------------------------------------
+# Remove variables with no distribution or < 1% unique values.
+flagged <- c(NULL)                                                 # init. vector of flagged var. #s
+for (n in 4:length(secom)) {
+    if ((min(secom[n], na.rm=T) == max(secom[n], na.rm=T)) |
+          (100*nrow(unique(secom[n]))/nrow(secom[n]) < varUnique)) {  # test for dist. and min. % of unique values
+        print(paste("Dist. Filter: Variable ", names(secom[n])," dropped"))
+        flagged <- c(flagged,-n)                                   # non-dist. variable columns
+    }
+}
+secom_clean <- secom[flagged]                                      # new WIP dataset
+
+# Consolodate all missing values to NA.
+replace_with_na_all(data = secom_clean, condition = ~.x %in% c("N/A", "missing", "na", " "))
+
+# Convert all NaN values to NA
+secom_clean[is.na(secom_clean)] <- NA
+
+#-----------------------------------------------------------------------
+# Characterize extent of missing data.
+#-----------------------------------------------------------------------
+# Total missing values.
+pctMissingInit <- round(100*n_miss(secom_clean)/(ncol(secom_clean)*nrow(secom_clean)), digits=2)
+paste("Initially missing",pctMissingInit,"% of the total data.")
+
+# Remove variables with more than 'maxMissing'%  observations.
+secom_clean <- secom_clean[100*colSums(is.na(secom_clean))/nrow(secom_clean) < maxMissing]
+
+pctMissing <- round(100*n_miss(secom_clean)/(ncol(secom_clean)*nrow(secom_clean)), digits=2)
+paste("Need to impute remaining",pctMissing,"% of the missing total data.")
+
+#-----------------------------------------------------------------------
+# WIP dataset. 
+#-----------------------------------------------------------------------
+secom_wip <- secom_clean                                           # start & end each section with this df
+
+```
+
+
+```{r transform distributions, eval=T, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold'}
+secom_trans <- secom_wip
+
+# Once distributions are final, set transformFlag=F to read them from file.
+if (transformFlag) {    # set flag in setup chunk
+
+    # Clean Extreme Outliers
+    secom_trans$V5[which(secom_trans$V5     >  900)] <- NA  # secom_trans$Status[which(secom_wip$V5 > 900)]
+    secom_trans$V16[which(secom_trans$V16   >  800)] <- NA  # secom_trans$Status[which(secom_wip$V16 > 800)]
+    secom_trans$V17[which(secom_trans$V17   >  100)] <- NA  # secom_trans$Status[which(secom_wip$V17 > 100)]
+    secom_trans$V17[which(secom_trans$V18   <  0.7)] <- NA  # secom_trans$Status[which(secom_wip$V18 < 0.7)]
+    secom_trans$V42[which(secom_trans$V42   >   30)] <- NA  # secom_trans$Status[which(secom_wip$V42 > 30)]
+    secom_trans$V68[which(secom_trans$V68   >  750)] <- NA  # secom_trans$Status[which(secom_wip$V68 > 750)]
+    secom_trans$V118[which(secom_trans$V118 >  300)] <- NA  # secom_trans$Status[which(secom_wip$V118 > 9000)]
+    secom_trans$V141[which(secom_trans$V141 > 9000)] <- NA  # secom_trans$Status[which(secom_wip$V141 > 9000)]
+    secom_trans$V148[which(secom_trans$V148 > 0.75)] <- NA  # secom_trans$Status[which(secom_wip$V148 > 0.75)]
+    secom_trans$V149[which(secom_trans$V149 >  600)] <- NA  # secom_trans$Status[which(secom_wip$V149 > 600)]
+    secom_trans$V153[which(secom_trans$V153 >  750)] <- NA  # secom_trans$Status[which(secom_wip$V153 > 750)]
+    secom_trans$V155[which(secom_trans$V155 >  150)] <- NA  # secom_trans$Status[which(secom_wip$V155 > 150)]
+    secom_trans$V186[which(secom_trans$V186 >  200)] <- NA  # secom_trans$Status[which(secom_wip$V186 > 200)]
+    secom_trans$V188[which(secom_trans$V188 >  200)] <- NA  # secom_trans$Status[which(secom_wip$V188 > 200)]
+    secom_trans$V205[which(secom_trans$V205 > 7500)] <- NA  # secom_trans$Status[which(secom_wip$V205 > 7500)]
+    secom_trans$V224[which(secom_trans$V224 > 1500)] <- NA  # secom_trans$Status[which(secom_wip$V224 > 1500)]
+    secom_trans$V253[which(secom_trans$V253 > 2000)] <- NA  # secom_trans$Status[which(secom_wip$V253 > 2000)]
+    #secom_trans$V275[which(secom_trans$V275 >    1)] <- NA  # secom_trans$Status[which(secom_wip$V275 >    1)]
+    secom_trans$V276[which(secom_trans$V276 > 3000)] <- NA  # secom_trans$Status[which(secom_wip$V276 > 3000)]
+    secom_trans$V283[which(secom_trans$V283 >  0.3)] <- NA  # secom_trans$Status[which(secom_wip$V283 >  0.3)]
+    secom_trans$V284[which(secom_trans$V284 >  200)] <- NA  # secom_trans$Status[which(secom_wip$V284 >  200)]
+    secom_trans$V288[which(secom_trans$V288 >  250)] <- NA  # secom_trans$Status[which(secom_wip$V288 >  250)]
+    secom_trans$V290[which(secom_trans$V290 >   50)] <- NA  # secom_trans$Status[which(secom_wip$V290 >   50)]
+    secom_trans$V322[which(secom_trans$V322 >   60)] <- NA  # secom_trans$Status[which(secom_wip$V322 >   60)]
+    secom_trans$V324[which(secom_trans$V324 >   75)] <- NA  # secom_trans$Status[which(secom_wip$V324 >   75)]
+    secom_trans$V341[which(secom_trans$V341 > 2000)] <- NA  # secom_trans$Status[which(secom_wip$V341 > 2000)]
+    secom_trans$V362[which(secom_trans$V362 >  400)] <- NA  # secom_trans$Status[which(secom_wip$V362 >  400)]
+    secom_trans$V389[which(secom_trans$V389 >  250)] <- NA  # secom_trans$Status[which(secom_wip$V389 >  250)]
+    secom_trans$V391[which(secom_trans$V391 >  700)] <- NA  # secom_trans$Status[which(secom_wip$V391 >  700)]
+    secom_trans$V422[which(secom_trans$V422 >  200)] <- NA  # secom_trans$Status[which(secom_wip$V422 >  200)]
+    secom_trans$V426[which(secom_trans$V426 >  750)] <- NA  # secom_trans$Status[which(secom_wip$V426 >  750)]
+    secom_trans$V428[which(secom_trans$V428 >   90)] <- NA  # secom_trans$Status[which(secom_wip$V428 >   90)]
+    secom_trans$V454[which(secom_trans$V454 >   30)] <- NA  # secom_trans$Status[which(secom_wip$V454 >   30)]
+    secom_trans$V496[which(secom_trans$V496 >   90)] <- NA  # secom_trans$Status[which(secom_wip$V496 >   90)]
+    secom_trans$V525[which(secom_trans$V525 >  700)] <- NA  # secom_trans$Status[which(secom_wip$V525 >  700)]
+    secom_trans$V584[which(secom_trans$V584 >  0.4)] <- NA  # secom_trans$Status[which(secom_wip$V584 >  0.4)]
+    secom_trans$V585[which(secom_trans$V585 >  0.1)] <- NA  # secom_trans$Status[which(secom_wip$V585 >  0.1)]
+    secom_trans$V586[which(secom_trans$V586 >   80)] <- NA  # secom_trans$Status[which(secom_wip$V586 >   80)]
+    
+    # Translations
+    translateVarList <- c("V78","V80","V212","V218","V220","V251","V253","V278")
+    secom_trans <- secom_trans %>% mutate_at(vars(translateVarList), ~(.+1))
+
+    # log10() Transforms
+    transformVarList_0 <- c("V1","V4","V8","V12","V13","V33","V34","V35","V36","V37","V40","V42","V60","V61","V63","V64","V65","V66","V72","V78","V80","V90")
+    transformVarList_1 <- c("V122","V125","V126","V127","V133","V136","V137","V138","V139","V140","V141","V143","V144","V145","V146","V147","V148","V151","V152","V153","V154","V155","V156","V157","V160","V161","V162","V163","V164","V165","V166","V167","V168","V169","V172","V185","V186","V189","V196","V197","V198","V199")
+    transformVarList_2 <- c("V200","V201","V202","V203","V204","V205","V206","V208","V211","V212","V213","V214","V218","V220","V223","V225","V226","V228","V229","V249","V250","V251","V252","V253","V254","V271","V274","V278","V280","V281","V282","V283","V286","V287","V288","V289","V291","V292","V295","V296","V297","V298","V299")
+    transformVarList_3 <- c("V300","V301","V302","V303","V304","V307","V321","V322","V324","V325","V332","V333","V334","V335","V336","V337","V338","V339","V340","V341","V342","V344","V349","V350","V351","V352","V353","V356","V358","V361","V363","V364","V366","V367","V368","V369","V387","V388","V390","V391","V392")
+    transformVarList_4 <- c("V409","V412","V413","V414","V416","V417","V418","V419","V420","V421","V424","V425","V426","V427","V429","V430","V431","V432","V433","V434","V435","V436","V437","V438","V439","V440","V443","V455","V457","V458","V460","V461","V468","V469","V470","V471","V472","V474","V475","V476","V477","V478","V480","V481","V483","V484","V485","V486","V487","V488","V489","V490","V491","V492","V495","V497")
+    transformVarList_5 <- c("V511","V521","V523","V524","V525","V526","V541","V559","V560","V561","V562","V571","V573","V574","V575","V577","V578","V584","V585","V586","V588","V589","V590")
+    secom_trans <- secom_trans %>% mutate_at(vars(transformVarList_0), funs(log10))
+    secom_trans <- secom_trans %>% mutate_at(vars(transformVarList_1), funs(log10))
+    secom_trans <- secom_trans %>% mutate_at(vars(transformVarList_2), funs(log10))
+    secom_trans <- secom_trans %>% mutate_at(vars(transformVarList_3), funs(log10))
+    secom_trans <- secom_trans %>% mutate_at(vars(transformVarList_4), funs(log10))
+    secom_trans <- secom_trans %>% mutate_at(vars(transformVarList_5), funs(log10))
+
+    # Save imputed dataset for later use.
+    path_out <- file.path("Data", "secom_trans.csv")
+    write.csv(secom_trans, path_out)
+} else {
+    path_in <- file.path("Data", "secom_trans.csv")
+    secom_trans <- read.csv(path_in, stringsAsFactors=F) 
+    secom_trans <- within(secom_trans, rm(X))                          # drop extra variable    
+} #end if (transformFlag)
+
+
+# Density + Q-Q Plots
+#plot_data <- secom_trans
+#sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
+#distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nPlot=9, nBins=100, QQplot=TRUE)
+```
+
+
+Sensor data comprise real valued coninuous random variables by nature. So any variable that contains only missing data or has no variation is irrelevant for this analysis and can be dropped. The approach taken here was to drop all variables where the distribution min = max. It's not clear why these data were included in the SECOM dataset, but since the goal is to identify signals or combinations of signals leading to an alarm condition, unvarying sensor data are irrelevant. The next important issue with the dataset was to properly classify all missings as "NA". Missing results can be defined by a number of non-standard labels including "N/A", "missing", "na" or even " ". The naniar package provides a simple function replace_with_na_all() to simplify converting this arbitrary list of labels to "NA". Finally, there were a number of "NaN" designations that aren't typically interpreted as missings, but since the sensor data should be real values it was determined these values should be treated as "NA". It was found that initially `r pctMissingInit`% of the dataset was missing. While that doesn't seem to be too significantly large, it depends on how missingness is distributed within the dataset. Among the many useful features of the naniar package are plotting routines for visually exploring missingness. One of the routines gg_miss_var() is shown below in Figure 1 in which the variables are ordered by total missingness and plotted on the y-axis, and the number of missing observations on the x-axis. The number variables in this dataset is too large for printing so are omitted from the y-axis. The notable takeaway here was that most of the missing data was limited to a relatively few number of variables. The safe approach taken was to drop all variables with > `r maxMissing`% missing data leaving just `r pctMissing`% total missing data for imputation.
+
+
+\newline
+&nbsp;
+
+```{r initial missings visual, echo=F, warning=F, message=F, results='hide', out.width='90%', fig.align='center', fig.cap='Fig. 2.1: Visualization of initial missingness.'}
+#-----------------------------------------------------------------------
+# Visualize extent of missing data.
+#-----------------------------------------------------------------------
+# naniar visualize initial missing data.
+gg_miss_var(secom) +
+  theme(axis.text.y = element_text(color = "white", size = 2)) +
+  labs(title = "Summy of Missing Data in SECOM Dataset",
+       y = "# Missing Observations",
+       x = "Variables")
+#vis_miss(secom_clean, cluster = T, sort_miss = T)
+#gg_miss_which(secom_clean)
+#gg_miss_fct(secom_clean, fct=Status)
+```
+
+\newline
+&nbsp;
+
+## Imputation
+
+```{r imputation, eval=T, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# Imputation: MICE
+#-----------------------------------------------------------------------
+dataSet <- secom_wip  #[1:50]  # Useful for limiting data for debug.
+secom_shadow <- dataSet %>%
+  bind_shadow() %>%
+  add_label_shadow() 
+
+# Extract naniar shadow matrix.
+secom_shadow <- secom_shadow[grepl("_NA$",names(secom_shadow)) |  grepl("any_missing",names(secom_shadow))]
+
+# Once imputed values are final set imputeFlag=F to read them from file.
+if (imputeFlag) {    # set flag in setup chunk
+    # Update prediction matrix.
+    ini <- mice(dataSet, maxit=0, print=F)
+    pred <- ini$pred
+    pred[,c("Status","Date","Time")] <- 0                                   # vars not used as predictors
+
+    secom_imp <- dataSet %>%
+      #mice(m=1, method="norm",         pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="norm.predict", pred=pred, maxit = 1, seed=100) %>%
+      mice(m=1, method="norm.nob",      pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="gamlssTF",     pred=pred, maxit = 1, seed=100) %>%
+      complete(1) 
+    
+    # Save imputed dataset for later use.
+    path_out <- file.path("Data", "secom_imp.csv")
+    write.csv(secom_imp, path_out)
+} else {
+    path_in <- file.path("Data", "secom_imp.csv")
+    secom_imp <- read.csv(path_in, stringsAsFactors=F) 
+    secom_imp <- within(secom_imp, rm(X))                          # drop extra variable    
+    #secom_imp$Status <- as.factor(secom_imp$Status)
+} #end if (imputeFlag)
+
+paste("There are", n_miss(secom_imp), "missing values remaining.")
+
+# Merge data with shadow matrix.
+secom_imp_bound <- cbind(secom_imp, secom_shadow)
+dataSet_bound <- cbind(dataSet, secom_shadow)
+bound_data <- bind_rows(original = dataSet_bound,
+                        imputed = secom_imp_bound,
+                        .id = "data_type")
+
+# Final Stats
+numVars = length(names(secom_imp))
+numMiss = n_miss(secom_imp)
+
+#-----------------------------------------------------------------------
+# WIP dataset. 
+#-----------------------------------------------------------------------
+secom_wip <- secom_imp                                           # start & end each section with this df
+
+```
+
+There are several R packages for imputing data. Initially, the [simputation](https://cran.r-project.org/web/packages/simputation/index.html) package was chosen for it's ease of use and integration with naniar and ggplot2. Unfortunately, the number of variables in this dataset created multiple run-time issues for the simputation engine so it had to be abandoned. Instead, the [mice package ](https://cran.r-project.org/web/packages/mice/index.html), which stands for "Multivariate Imputation by Chained Equations", provided powerful fitting functionality at a moderate computation cost. The package is capable of fitting a different imputation model to each variable, but the norm.nob method was applied unilaterally and found to return reasonably good values on comparing pre- and post-imputation distributions. Figure 2.2 shows a sample distribution for a random variable overlaying the imputed values in the histogram. A summary of the initial imputation effort is shown in Table 2.2. Of the initial 593 total variables in the dataset, the post-wrangling count was 417. And the initial 4.51% total missing data has been reduced to zero.
+
+\newline
+&nbsp;
+
+```{r sample imputed distribution, eval=T, echo=F, warning=F, message=F, results='hide', out.width='75%', fig.align='center', fig.cap='Fig. 2.2: Example distribution before and after imputation'}
+# Review results.
+sensorVars <- names(secom_wip)[grepl("^V",names(secom_wip)) & !grepl("_NA$",names(secom_wip))]
+distMatrix(bound_data, plotVars=sensorVars, factorBy="data_type", plotDim=1, nStart=1, nPlot=1, nBins=200, numXaxes=1)
+```
+
+\newline
+&nbsp;
+
+```{r wrangling summary table, eval=T, echo=F, warning=F, message=F, out.width='40%'}
+
+Metric <- c("# of Variables", "# of Observations", "% Missings")
+Initial <- c((as.integer(numVarsInit)), as.integer(nrow(secom)), round(100*numMissInit/(numVarsInit*nrow(secom)), 2))
+Final <- c(as.integer(numVars), as.integer(nrow(secom_wip)), round(100*numMiss/(numVars*nrow(secom_wip)), 2))
+wrangled <- data.frame(Metric, Initial, Final)
+
+kable(wrangled, caption = 'Table 2.2: Summary of data wrangling.') %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+\newline
+&nbsp;
+
+# Data Exploration
+
+## Sensor Data Distributions
+
+An important requirement for developing a multivariate model for this project is how well the individual sensor data distributions can be modeled by a known statistical distribution type. Ideally each variable would follow the well known normal distribution. The figure below shows an example of one variable in the SECOM dataset that is roughly normal based on visual inspect of the probability density (PDF) distribution. Included below that is its corresponding Q-Q plot, or quantile plot, which plots the measured versus theoretical quantile data. For an ideal normal distribution the fit line of a Q-Q plot would be colinear with the data and have very small residuals over the entire +3/-3 z-score range. The farther the fit line deviates from data the less confident we can be that the distribution is normal. A reasonable target is that at least 95% of the data fits the distribution which corresponds to a good fit between z = -1.96 to +1.96. Since the goal of the model in this project is to predict physical wafers failures based on production sensor data, the distribution is also shown comparing passing and failing results Except for differences in the tails, there's very little distinction between the distributions. Since it's not known if the differences in the tail data is important or not, the apparent outliers will not be removed from the analysis yet.The second set of plots below show the data for another sensor which also follows a normal distribution, but comparison of yield results shows differences in both the peak probability and tail distribution. 
+
+\newline
+&nbsp;
+
+```{r plot Var2 density, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.1: Example of near normal distributions.'}
+# Copy of data for plotting.
+#plot_data <- secom_wip
+plot_data <- secom
+sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
+plot_data$Yield <- as.factor(plot_data$Status)
+levels(plot_data$Yield) <- c("pass", "fail")
+
+#Density Plots
+distMatrix(plot_data, plotVars="V2",                   plotDim=1, nStart=1, nPlot=1, nBins=100, title="Density Plot for All 'V2' Data")
+distMatrix(plot_data, plotVars="V2", factorBy='Yield', plotDim=1, nStart=1, nPlot=1, nBins=100, title="Density Plot for 'V2' by Yield")
+
+# Q-Q Plots
+ggplot(plot_data, aes(sample=V2)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for All 'V2' Data")
+
+ggplot(plot_data, aes(sample=V2, color=Yield)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5) +
+  ggtitle("Q-Q Plot for 'V2' by Yield")
+```
+
+\newline
+&nbsp;
+
+```{r plot Var3 density, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.2: Example of near normal distributions with yield differences.'}
+
+# Density Plots
+distMatrix(plot_data, plotVars="V3",                   plotDim=1, nStart=1, nPlot=1, nBins=100, 
+           title="Density Plot for All 'V3' Data")
+distMatrix(plot_data, plotVars="V3", factorBy='Yield', plotDim=1, nStart=1, nPlot=1, nBins=100, 
+           title="Density Plot for 'V3' by Yield")
+
+# Q-Q Plots
+ggplot(plot_data, aes(sample=V3)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for All 'V3' Data")
+
+ggplot(plot_data, aes(sample=V3, color=Yield)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5) +
+  ggtitle("Q-Q Plot for 'V3' by Yield")
+```
+
+
+\newline
+&nbsp;
+
+What happens then for data that do not exhibit a normal distribution? The figure below shows the case for a right-skewed distribution at the top left with corresponding Q-Q plot below it. The longer right tails is clear in the PDF plot but really stands out in the Q-Q plot where the trend sharply deviates near z = +1. For distributions like this one the plan is to transform the original data into a form that is closer to normal. The plots on the right side show the result after taking the logarithm of the sensor values. The effect is seen as rebalancing the distribution, making it more symmetric about the mean. There are many non-normal distribution types available for custom fitting these data, but the approach that will be taken here will be to apply logarithmic transform, or shift + transform. The problematic situation is when the data do not follow any single distribution type but is comprised of a superposition of two or more component distributions. The second set of plots below show examples of multi-modal sensor distributions. This data could be fit with a superposition of distributions, but review of the Q-Q plots shows that a normal distribution can describe the overall distribution adequately. In this project then, multi-modal distributions will be approximated by a normal or log-normal distribution as best fits the data.
+
+\newline
+&nbsp;
+
+```{r plot log density, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.3: Example skewed distribution.'}
+
+# Density Plots (linear and log scales)
+distMatrix(plot_data, plotVars="V65", plotDim=1, nStart=1, nPlot=1, nBins=100, numXaxes = 2)
+
+# Q-Q Plot
+ggplot(plot_data, aes(sample=V65)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for 'V65'")
+# Q-Q Plot
+ggplot(plot_data, aes(sample=log(V65))) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for All log('V65')")
+```
+
+\newline
+&nbsp;
+
+```{r plot multi-mode density, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.4: Example multi-modal distributions.'}
+
+distMatrix(plot_data, plotVars="V22", factorBy='Yield', plotDim=1, nStart=1, nPlot=1, nBins=100,
+           title="Bi-Modal Distribution")
+distMatrix(plot_data, plotVars="V52", factorBy='Yield', plotDim=1, nStart=1, nPlot=1, nBins=100,
+           title="tri-Modal Distribution")
+
+# Q-Q Plot
+ggplot(plot_data, aes(sample=V22)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for 'V22'")
+# Q-Q Plot
+ggplot(plot_data, aes(sample=V55)) +
+  geom_qq(size=2) +
+  geom_qq_line(size=1.5, color="red") +
+  ggtitle("Q-Q Plot for 'V55'")
+
+```
+
+\newline
+&nbsp;
+
+
+## Correlation Analysis
+
+A scatter plot is good way to assess relationships between pairs of variables. The more that the data trends with a positive slope the more the two variables are correlated. On the other hand, the more the data trends with a negative slope the more the two variables are anti-correlated. When building a model with a few variables this is a convenient way to visually identify the relevant features. The example scatter plot matrix below shows the relationships between the first ten variables in the SECOM dataset plus the dependent variable 'Status'. To quantify the relationship between two variables a correlation analysis is run and generates a correlation coefficient between -1 and +1. Correlated data obtain a coefficient > 0 up to a maximum of 1 and anti-correlated data obtain a coefficient < 0 down to a minimum of -1. Fig 3.6 shows exampes of highly correlated (top), highly anti-correlated (bottom) and uncorrelated (middle) variable pairs in the SECOM dataset. Table 3.1 below that lists the same information in tabular format.
+
+\newline
+&nbsp;
+
+```{r scatter plot example, echo=F, message=F, warning=F, results='hide', out.width='90%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.5: Example scatter plot matrix.'}
+#-----------------------------------------------------------------------
+# Scatter Plot Matrix
+#-----------------------------------------------------------------------
+dataSet <- secom_wip[1:12]                                       # Useful for limiting data for debug.
+dataSet[c('Date','Time','Yield')] <- c(NULL)
+
+plot(dataSet)
+```
+
+\newline
+&nbsp;
+
+```{r sample correlation matrix, echo=F, message=F, warning=F, results='hide', out.width='90%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.6: Sample correlation coefficient ranges for the SECOM dataset.'}
+
+#-----------------------------------------------------------------------
+# Sample Correlation Matrix
+#-----------------------------------------------------------------------
+dataSet <- secom_wip
+dataSet[c('Date','Time','Yield')] <- c(NULL)                                         # drop variables
+corr_df <- rcorr(as.matrix(dataSet))                                                 # Hmisc correlation analysis
+corr_list <- flattenCorrMatrix(corr_df$r, corr_df$P)                                 # pairwise variable coeff list
+corr_list <- mutate(corr_list, pairName=paste(var1,"-",var2,sep=""))                 # unite var1 and var2 names
+botCorr <- arrange(corr_list, coeff)[1:10,]                                          # lowest correlation coeff.
+topCorr <- arrange(corr_list, desc(coeff))[1:10,]                                    # highest correlation coeff.
+midCorr <- corr_list[(corr_list$coeff >= -0.000005) & (corr_list$coeff <= 0.000005),]# mid-range correlation coeff.
+corr_sample <- arrange(bind_rows(bottom = botCorr,
+                                 middle = midCorr,
+                                 top    = topCorr, 
+                                 .id = "Range"), coeff)
+
+# correlation coeff vs. variable parings
+ggplot(corr_sample, aes(reorder(pairName,coeff), coeff, col=Range)) +
+  geom_point(size=2) +
+  theme(axis.text.x = element_text(size = 10, angle = 60, hjust=1)) +
+  labs(title = "Sample of Correlation Coefficents",
+       x = "Variable Pair Names",
+       y = "Correlation Coefficient")
+
+# p-values vs. variable parings
+#ggplot(corr_sample, aes(reorder(pairName,coeff), p, col=Range)) +
+#  geom_point(size=2) +
+#  theme(axis.text.x = element_text(size = 10, angle = 60, hjust=1)) +
+#  labs(title = "Sample of Correlation Coefficents",
+#       x = "Variable Pair Names",
+#       y = "P-Values")
+```
+
+\newline
+&nbsp;
+
+```{r sample correlation table, echo=F, warning=F, message=F, out.width='50%'}
+#corr_sample$Range <- NULL
+corr_sample$pairName <- NULL
+corr_sample$p <- NULL
+corr_sample$coeff <- round(corr_sample$coeff,4)
+kable(corr_sample, caption = 'Table 3.1: Data used for Fig. 3.6.') %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
+```
+
+\newline
+&nbsp;
+
+A correlogram is another useful visualization tool for spotting trends in variable relationships. The correlogram reduces the information in the scatter plot matrix to a color-coded matrix of correlation coefficients for easy identification of trends. The relationships for the first 10 variable plus the dependent variable are shown below in Fig. 3.7. In a dataset with hundreds of variables these visual aids aren't very useful. Fig. 3.8 below shows the case for the current SECOM dataset. The plot does show interesting clustering trends but this amount of data is too cumbersome to perform visual analyses. The approach that will be taken in this project is to select features based on their statistical significance in a given model.
+
+\newline
+&nbsp;
+
+```{r correlogram example, eval=T, echo=F, message=F, warning=F, results='hide', out.width='75%', fig.align='center', fig.cap='Fig. 3.7: Example correlogram plot.'}
+#-----------------------------------------------------------------------
+# Sample Correlogram
+#-----------------------------------------------------------------------
+dataSet <- secom_wip[1:12]                                       # Useful for limiting data for debug.
+dataSet[c('Date','Time','Yield')] <- c(NULL)
+
+corr_data <- cor(dataSet)
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot::corrplot(corr_data, method="color", col=col(200), type="upper", order="original", diag=FALSE, 
+         addCoef.col = "black", 
+         tl.cex=0.75, tl.col="black", tl.srt=45) 
+
+```
+
+\newline
+&nbsp;
+
+```{r correlogram, echo=F, message=F, warning=F, results='hide', out.width='90%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.8: Correlogram plot for the SECOM dataset.'}
+#-----------------------------------------------------------------------
+# Correlogram
+#-----------------------------------------------------------------------
+dataSet <- secom_wip #[1:50]                                       # Useful for limiting data for debug.
+dataSet[c('Date','Time','Yield')] <- c(NULL)
+
+corr_data <- cor(dataSet)
+
+# correlogram with hclust reordering
+col <- colorRampPalette(c("#BB4444", "#EE9988", "#FFFFFF", "#77AADD", "#4477AA"))
+corrplot::corrplot(corr_data, method="color", col=col(200), type="upper", order="original", diag=FALSE, 
+         tl.cex=0.05, tl.col="black", tl.srt=45) 
+
+```
+
+\newline
+&nbsp;
+
+While the number of cross-correlations makes visual analysis cumbersome in general, it is still interesting to review how each variable is correlated to the dependent variable, 'Status'. Fig. 3.9 plots the SECOM variables ordered by their correlation coefficient with 'Status'. The notable takeaway is that none of the individual variables is signficantly correlated with the ouput response meaning that the final model should expect to retain a significant number of independent variables. 
+
+\newline
+&nbsp;
+
+```{r dependent variable correlations, echo=F, message=F, warning=F, results='hide', out.width='90%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.9: Correlation coefficients for the dependent variable, Status.'}
+
+#-----------------------------------------------------------------------
+# Dependent Variable Correlations
+#-----------------------------------------------------------------------
+corr_dv <- arrange(corr_list[which(corr_list$var1 == "Status"),], coeff)
+
+ggplot(corr_dv, aes(reorder(var2,coeff), coeff)) +
+  geom_point(size=0.5) +
+  theme(axis.text.x  = element_text(size = 4, angle = 60, vjust = grid::unit(c(0.2, -0.1, -0.4), "points")),
+        axis.title.x = element_text(vjust = 30)) +
+  
+  labs(title = "Correlation Coefficents for Dependent Variable 'Status'",
+       x = "Variable Names",
+       y = "Correlation Coefficient")
+```
+
+\newline
+&nbsp;
+
+
+# Modeling
+
+## Baseline Logistic Regression Model
+
+All available features.
+
+```{r split dataset, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# Split Training and Test Sets
+#-----------------------------------------------------------------------
+split <- sample.split(secom_wip$Status, SplitRatio = 0.75)
+
+# Unscaled data
+#secom_train <- secom_wip[which(split == TRUE),]
+#secom_test <- secom_wip[which(split == FALSE),]
+
+# Scaled data
+secom_scaled <- scale(as.matrix(secom_wip[,which(grepl("^V",names(secom_wip)))]))
+secom_scaled <- bind_cols(secom_wip['Status'], data.frame(secom_scaled))
+secom_train <- secom_scaled[which(split == TRUE),]
+secom_test <- secom_scaled[which(split == FALSE),]
+
+```
+
+
+```{r baseline logistic model, echo=F, message=F, warning=F}
+#-----------------------------------------------------------------------
+# Baseline Model: bayesglm
+#-----------------------------------------------------------------------
+dataSet <- secom_train #[1:50]                                       # Useful for limiting data for debug.
+dataSet[c('Date','Time')] <- c(NULL)
+
+# Baseline glm model fit.
+fit_glm_baseline_1 <- bayesglm(Status ~ . , data=dataSet, family="binomial", maxit=200) # baseline glm fit model
+Status_pred <- fitted(fit_glm_baseline_1)                          # predicted model vals
+Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
+
+# Other useful functions 
+summary(fit_glm_baseline_1)                                        # show results
+#coefficients(fit_lm_baseline)                                     # model coefficients
+#confint(fit_lm_baseline, level=0.95)                              # CIs for model parameters 
+#fitted(fit_lm_baseline)                                           # predicted values
+#residuals(fit_lm_baseline)                                        # residuals
+#anova(fit_lm_baseline)                                            # anova table 
+#vcov(fit_lm_baseline)                                             # covariance matrix for model parameters 
+#influence(fit_lm_baseline)                                        # regression diagnostics
+
+# Save model performance for later fit comparisons.
+model_glm_baseline_1 <- data.frame(dataSet["Status"], Status_pred)
+model_glm_baseline_1$model <- c("glm: All Coeff.")
+model_glm_baseline_1 <- mutate(model_glm_baseline_1, accuracy = 1 - abs(Status_pred - Status))
+
+#ggplot(model_glm_baseline_1, aes(x = model, fill = factor(accuracy))) +
+#  geom_bar(position = "fill") +
+#  guides(fill = guide_legend(title = "Model Performance")) +
+#  scale_fill_discrete(labels = paste(c("fail", "pass")))
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred),  
+                reference = as.factor(dataSet$Status))
+```
+
+Test set results.
+
+```{r baseline logistic model test, eval=T, echo=F, message=F, warning=F}
+
+# Test Set
+testSet <- secom_test                                              # Useful for limiting data for debug.
+testSet[c('Date','Time','data_type')] <- c(NULL)
+
+Status_test <- predict(fit_glm_baseline_1, 
+                       newdata = testSet, 
+                       type = "response")                          # predicted model 
+Status_test[Status_test < threshold] <- 0                          # reset "pass" level
+Status_test[Status_test >= threshold] <- 1                         # reset "fail" level
+
+# Save model performance for later fit comparisons.
+model_glm_baseline_1_test <- data.frame(testSet["Status"], Status_test)
+model_glm_baseline_1_test$model <- c("glm - Test")
+model_glm_baseline_1_test <- mutate(model_glm_baseline_1_test, accuracy = 1 - abs(as.numeric(Status_test) - as.numeric(Status)))
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_test),  
+                       reference = as.factor(testSet$Status))
+
+```
+
+
+```{r iterative baseline logistic model, eval=T, echo=F, message=F, warning=F}
+#-----------------------------------------------------------------------
+# Logistic Model (iterative coefficient optimization) : bayesglm
+#-----------------------------------------------------------------------
+dataSet <- secom_train #[1:50]                                       # Useful for limiting data for debug.
+dataSet[c('Date','Time','Yield')] <- c(NULL)
+
+# Initialize loop variables.
+loopCount <- 1                                                     # loop counter
+maxPval <- 1                                                       # intial max. p-value
+fitStats <- data.frame(loopCount=0,Fstat=0,df=0,Rsq=0)             # loop stat dataframe
+
+if(file.exists("Data/fit_glm_baseline_2.rda")) {
+  
+    load("Data/fit_glm_baseline_2.rda")                            # load model
+  
+} else {                                                           # else refit model
+  
+    while (maxPval > maxSig) {
+        fit_glm_baseline_2 <- bayesglm(Status ~ . , data=dataSet, family="binomial", maxit=200)   # baseline glm fit model
+        c <- data.frame(coef(summary(fit_glm_baseline_2)))
+        vars <- rownames(c)
+        c <- bind_cols(data.frame(vars, stringsAsFactors=F), c)
+        c <- c[c(-1),]                                                 # Remove intercept.
+        
+        df <- summary(fit_glm_baseline_2)$df[1]                        # degrees of freedom
+        fitStats[loopCount,] <- c(loopCount, df)
+        
+        maxPval <- max(abs(c$Pr...z..))                                # current max p-value
+        dropVar <- c$vars[which(c(abs(c$Pr...z..) == maxPval))]        # var name with max p-value
+        dataSet[dropVar] <- NULL
+        
+        print(paste("Loop#:",loopCount, "  Var. Count =", length(dataSet)))
+        maxPval <- max(abs(c$Pr...z..))                                # current p-value
+        loopCount <- loopCount + 1
+    } #end while
+    
+    save(fit_glm_baseline_2, file = "Data/fit_glm_baseline_2.rda")
+
+} # end if file.exists
+
+Status_pred <- fitted(fit_glm_baseline_2)                          # predicted model vals
+Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
+
+#ggplot(fitStats, aes(x=fitStats$df, y=fitStats$Rsq)) +
+#  geom_point()
+
+# Other useful functions 
+summary(fit_glm_baseline_2)                                       # show results
+#coefficients(fit_glm_baseline_2)                                  # model coefficients
+#confint(fit_glm_baseline_2, level=0.95)                           # CIs for model parameters 
+#fitted(fit_glm_baseline_2)                                        # predicted values
+#residuals(fit_glm_baseline_2)                                     # residuals
+#anova(fit_glm_baseline_2)                                         # anova table 
+#vcov(fit_glm_baseline_2)                                          # covariance matrix for model parameters 
+#influence(fit_glm_baseline_2)                                     # regression diagnostics
+
+# Save model performance for later fit comparisons.
+model_glm_baseline_2 <- data.frame(dataSet["Status"], Status_pred)
+model_glm_baseline_2$model <- c("glm: Iter. Sig. Coeff.")
+model_glm_baseline_2 <- mutate(model_glm_baseline_2, accuracy = 1 - abs(Status_pred - Status))
+sigVars_glm_baseline_2 <- rownames(data.frame(fit_glm_baseline_2$coefficients))[c(-1)]  # significant coeff. names
+
+#-----------------------------------------------------------------------
+# Significant Model Features 
+#-----------------------------------------------------------------------
+ggplot(c, aes(reorder(vars,Std..Error), Std..Error)) +
+  geom_point(size=2) +
+  scale_y_log10() +
+  theme(axis.text.x  = element_text(size = 8, angle = 60, vjust = 0.5)) +
+  labs(title = "Significant Model Features",
+       x = "Variable Names",
+       y = "Std. Error")
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred),  
+                reference = as.factor(dataSet$Status))
+```
+
+Test set results.
+
+```{r baseline iterated logistic model test, eval=T, echo=F, message=F, warning=F}
+
+# Test Set
+testSet <- secom_test                                              # Useful for limiting data for debug.
+testSet[c('Date','Time','data_type')] <- c(NULL)
+
+Status_test <- predict(fit_glm_baseline_2, 
+                       newdata = testSet, 
+                       type = "response")                          # predicted model 
+Status_test[Status_test < threshold] <- 0                          # reset "pass" level
+Status_test[Status_test >= threshold] <- 1                         # reset "fail" level
+
+# Save model performance for later fit comparisons.
+model_glm_baseline_2_test <- data.frame(testSet["Status"], Status_test)
+model_glm_baseline_2_test$model <- c("glm - Test")
+model_glm_baseline_2_test <- mutate(model_glm_baseline_2_test, accuracy = 1 - abs(as.numeric(Status_test) - as.numeric(Status)))
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_test),  
+                       reference = as.factor(testSet$Status))
+
+```
+
+
+```{r glm baseline model comparison, eval=F, echo=F, message=F, warning=F}
+# Combine all baseline models.
+model_comp <- rbind(model_glm_baseline_1, model_glm_baseline_2, model_glm_baseline_3)
+
+ggplot(model_comp, aes(x = model, fill = factor(accurac))) +
+  geom_bar(position = "fill") +
+  guides(fill = guide_legend(title = "Model Performance")) +
+  scale_fill_discrete(labels = paste(c("fail", "pass"))) +
+  theme(axis.text.x = element_text(angle = 60, hjust = 1)) +
+  labs(title = "Comparison of All Baseline Model Types")
+```
+
+## Class Rebalancing (SMOTE)
+
+```{r smote, echo=F, message=F, warning=F, results='hide'}
+#-----------------------------------------------------------------------
+# Status Rebalancing: smotefamily
+#-----------------------------------------------------------------------
+dataSet <- secom_train #[1:50]                                       # Useful for limiting data for debug.
+
+# Once rebalanced values are final, set smoteFlag=F to read them from file.
+if (smoteFlag) {                                   # set flag in setup chunk
+    #dataSet <- secom_imp #[1:10]  # Useful for limiting data for debug.
+    sensorVars <- names(dataSet)[grepl("^V",names(dataSet)) & !grepl("_NA$",names(dataSet))]
+
+    smote_data <- SMOTE(dataSet[sensorVars],                       # feature values
+                        dataSet$Status,                            # class labels
+                        K = 25, dup_size = 0)                      # function parameters
+    syn_data <- smote_data$syn_data                                # synthetic minority class data
+    syn_data <- within(syn_data, rm(class))                        # drop class variable
+    syn_data$Status <- 1                                           # all synthesized data are Status = "fail"
+   
+    secom_smote <- bind_rows(original = dataSet,
+                             synthetic = syn_data,
+                             .id = "data_type")
+
+    # Save imputed dataset for later use.
+    path_out <- file.path("Data", "secom_smote.csv")
+    write.csv(secom_smote, path_out)
+} else {
+    path_in <- file.path("Data", "secom_smote.csv")
+    secom_smote <- read.csv(path_in, stringsAsFactors=F) 
+    secom_smote <- within(secom_smote, rm(X))      # drop extra variable    
+    #secom_smote$Status <- as.factor(secom_smote$Status)
+} #end if (smoteFlag)
+
+#-----------------------------------------------------------------------
+# WIP dataset. 
+#-----------------------------------------------------------------------
+secom_train_smote <- secom_smote                                   # start & end each section with this df
+
+```
+
+
+```{r sample smote distribution, echo=F, warning=F, message=F, results='hide', out.width='100%', fig.align='center', fig.cap='Example distribution before and after SMOTE synthesis.'}
+# Review results.
+sensorVars <- names(secom_smote)[grepl("^V",names(secom_smote)) & !grepl("_NA$",names(secom_smote))]
+distMatrix(secom_smote, plotVars=sensorVars, factorBy="data_type", plotDim=3, nStart=1, nPlot=9, nBins=100, numXaxes=1)
+```
+
+## Random Forest Model
+
+Training results.
+
+```{r random forest test matrix, eval=T, echo=F, message=F, warning=F}
+#-----------------------------------------------------------------------
+# Random Forest : randomForest
+#-----------------------------------------------------------------------
+# Training Set
+dataSet <- secom_train_smote #[1:50]                               # Normalized
+dataSet[c('Date','Time','data_type')] <- c(NULL)
+dataSet$Status <- as.factor(dataSet$Status)                        # set to factor for classification fit
+
+# Test Set
+testSet <- secom_test                                              # Normalized
+testSet[c('Date','Time','data_type')] <- c(NULL)
+testSet$Status <- as.factor(testSet$Status)                        # set to factor for classification fit
+
+# RF tuning parameters
+nodesizes <- c(1,4,10,40,100)
+ntrees <- c(1,4,10,40,100,400)
+maxits <- c(10,40,100,400)
+mtrys <- c(1,4,10,40,100,400)
+
+# Define empty stats dataframe.
+rf_fit_stats <- data.frame(nodesize=integer(),
+                           ntree=integer(),
+                           maxit=integer(),
+                           mtry=integer(),
+                           oob_err=double(),
+                           oob_0=double(),
+                           oob_1=double(),
+                           RMS_err=double(),
+                           RMS_err_0=double(),
+                           RMS_err_1=double(),
+                           var_err=double(),
+                           stdev_err=double(),
+                           stringsAsFactors=FALSE)
+
+for (nodesize in nodesizes) {
+    for (ntree in ntrees) {
+        for (maxit in maxits) {
+            for (mtry in mtrys) {
+                
+                fileName <- paste("Data/rf_nodesize=",nodesize,"_ntree=",ntree,"_maxit=",maxit,"_mtry=",mtry,".rda", sep="")
+                
+                if(file.exists(fileName)) {
+                    
+                    load(fileName)                                             # load model
+                     
+                } else {                                                       # else refit model
+                     
+                    fit_forest <- randomForest(Status ~ ., data = dataSet, 
+                                               nodesize = nodesize, 
+                                               ntree = ntree,
+                                               maxit = maxit,
+                                               mtry = mtry,
+                                               importance = TRUE,
+                                               keep.forest = TRUE)
+                    
+                    save(fit_forest, file = fileName)
+                } #end if
+                
+                # Training Fit Errors
+                oob_err <- fit_forest$err.rate[ntree,1]
+                oob_0   <- fit_forest$err.rate[ntree,2]
+                oob_1   <- fit_forest$err.rate[ntree,3]
+                
+                # Test Fit Errors
+                Status_pred <- predict(fit_forest, newdata = testSet)              # predicted model vals
+                RMS_err <- mean((as.numeric(testSet$Status) - as.numeric(Status_pred))^2)
+                RMS_err_0 <- mean((as.numeric(testSet$Status[which(testSet$Status == 0)]) - 
+                                   as.numeric(Status_pred[which(testSet$Status == 0)]))^2)
+                RMS_err_1 <- mean((as.numeric(testSet$Status[which(testSet$Status == 1)]) - 
+                                   as.numeric(Status_pred[which(testSet$Status == 1)]))^2)
+                var_err <- (RMS_err_0 - RMS_err)^2 + (RMS_err_1 - RMS_err)^2
+                stdev_err <- sqrt((RMS_err_0 - RMS_err)^2 + (RMS_err_1 - RMS_err)^2)
+
+                # Model Fit Stats
+                rf_fit_stats <- base::rbind(rf_fit_stats, 
+                                      c(as.integer(nodesize),as.integer(ntree),as.integer(maxit),as.integer(mtry),
+                                        oob_err,oob_0,oob_1,RMS_err,RMS_err_0,RMS_err_1,var_err,stdev_err),
+                                      deparse.level = 1,
+                                      make.row.names = F)
+                
+            } #end for (mtry in mtrys)
+        } #end for (maxit in maxits)
+    } #end for (ntree in ntrees)
+} #end for (nodesize in nodesizes)
+
+colnames(rf_fit_stats) <- c("nodesize","ntree","maxit","mtry","oob_err","oob_0","oob_1","RMS_err","RMS_err_0","RMS_err_1","var_err","stdev_err")
+rf_fit_stats$nodesize  <- as.integer(rf_fit_stats$nodesize)
+rf_fit_stats$ntree     <- as.integer(rf_fit_stats$ntree)
+rf_fit_stats$maxit     <- as.integer(rf_fit_stats$maxit)
+rf_fit_stats$mtry      <- as.integer(rf_fit_stats$mtry)
+
+# Explore Model
+plot(fit_forest,
+     main = "Random Forest")
+
+varImpPlot(fit_forest,
+     cex = 0.7,
+     pt.cex = 1.5,
+     pch = 20,
+     color = "blue",
+     main = "Random Forest Variable Importance")
+
+#Status_pred <- predict(fit_forest, 
+#                       newdata = dataSet,
+#                       type = "response")                          # predicted response 
+#Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
+#Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
+
+# Save model performance for later fit comparisons.
+#model_forest <- data.frame(dataSet["Status"], Status_pred)
+#model_forest$model <- c("Random Forest")
+#model_forest <- mutate(model_forest, accuracy = 1 - abs(as.numeric(Status_pred) - as.numeric(Status)))
+
+#ggplot(model_forest, aes(x = model, fill = factor(accuracy))) +
+#  geom_bar(position = "fill") +
+#  guides(fill = guide_legend(title = "Model Performance")) +
+#  scale_fill_discrete(labels = paste(c("fail", "pass")))
+
+# Confusion Matrix
+#caret::confusionMatrix(data = as.factor(Status_pred),  
+#                reference = as.factor(dataSet$Status))
+
+```
+
+Random Forest fit and test error analysis.
+
+```{r random forest review, eval=T, echo=F, message=F, warning=F}
+
+plotErrors <- function(data, xList="", yList="", byVarList="", xFacetList="", yFacetList="") {
+  
+    myCol <- rbind(brewer.pal(9, "Blues")[c(3,6,8)],
+                   brewer.pal(9, "Reds")[c(3,6,8)])
+    
+    #print()
+    for (i in 1:length(xList)) {
+        for (j in 1:length(yList)) {
+            title <- paste(xList[i],"vs",yList[j],"by",byVarList[i],"(row =",xFacetList[i],"x col =",yFacetList[i],") grid",sep=" ")
+            print(  
+                data %>%
+                  #dplyr::select(-oob_0,-oob_1) %>%
+                  ggplot(aes(x=!! sym(xList[i]), y=!! sym(yList[j]), col=as.factor(!! sym(byVarList[i])))) +
+                    geom_line(size=1) +
+                    geom_point() +
+                    scale_x_log10() +
+                    scale_y_log10() +
+                    scale_color_manual(values = myCol) +
+                    facet_grid(vars(!! sym(xFacetList[i])), vars(!! sym(yFacetList[i]))) +
+                    ggtitle(title) 
+            ) #end print
+        } #end for (i)
+    } #end for (j)
+} #end function
+
+# Train and Test Errors by Geometries
+plotErrors(rf_fit_stats,
+           yList      = c("RMS_err","oob_err"),
+           xList      = c("ntree"   ,"maxit"   ,"mtry"    ,"nodesize"),
+           byVarList  = c("maxit"   ,"ntree"   ,"ntree"   ,"ntree"),
+           xFacetList = c("mtry"    ,"mtry"    ,"maxit"   ,"maxit"),
+           yFacetList = c("nodesize","nodesize","nodesize","mtry" ))
+
+# Train and Test Errors by Geometries
+plotErrors(rf_fit_stats %>% dplyr::filter(ntree > 10),
+           yList      = c("var_err"),
+           xList      = c("ntree"   ,"maxit"   ,"mtry"    ,"nodesize"),
+           byVarList  = c("maxit"   ,"ntree"   ,"ntree"   ,"ntree"),
+           xFacetList = c("mtry"    ,"mtry"    ,"maxit"   ,"maxit"),
+           yFacetList = c("nodesize","nodesize","nodesize","mtry" ))
+
+min_RMSE <- min(rf_fit_stats$RMS_err)
+rf_fit_stats[which(RMS_err*abs(rf_fit_stats$RMS_err_1 - rf_fit_stats$RMS_err_0) == min(RMS_err*abs(rf_fit_stats$RMS_err_1 - rf_fit_stats$RMS_err_0))),]
+rf_fit_stats[which(rf_fit_stats$RMS_err == min(rf_fit_stats$RMS_err)),]
+rf_fit_stats[which(rf_fit_stats$stdev_err == min(rf_fit_stats$stdev_err)),]
+
+```
+
+
+Training set model.
+
+```{r random forest training model, eval=T, echo=F, message=F, warning=F}
+#-----------------------------------------------------------------------
+# Random Forest : randomForest
+#-----------------------------------------------------------------------
+# Training Set
+dataSet <- secom_train_smote #[1:50]                               # Normalized
+dataSet[c('Date','Time','data_type')] <- c(NULL)
+dataSet$Status <- as.factor(dataSet$Status)                        # set to factor for classification fit
+
+fit_forest <- randomForest(Status ~ ., data = dataSet, 
+                           nodesize = 100, 
+                           ntree = 400,
+                           maxit = 100,
+                           mtry = 400,
+                           importance = TRUE,
+                           keep.forest = TRUE)
+
+# Explore Model
+plot(fit_forest,
+     main = "Random Forest")
+
+varImpPlot(fit_forest,
+     cex = 0.7,
+     pt.cex = 1.5,
+     pch = 20,
+     color = "blue",
+     main = "Random Forest Variable Importance")
+
+Status_pred <- predict(fit_forest, 
+                       newdata = dataSet,
+                       type = "response")                          # predicted response 
+Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
+
+# Save model performance for later fit comparisons.
+#model_forest <- data.frame(dataSet["Status"], Status_pred)
+#model_forest$model <- c("Random Forest")
+#model_forest <- mutate(model_forest, accuracy = 1 - abs(as.numeric(Status_pred) - as.numeric(Status)))
+
+#ggplot(model_forest, aes(x = model, fill = factor(accuracy))) +
+#  geom_bar(position = "fill") +
+#  guides(fill = guide_legend(title = "Model Performance")) +
+#  scale_fill_discrete(labels = paste(c("fail", "pass")))
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred),  
+                reference = as.factor(dataSet$Status))
+
+```
+
+Test set results.
+
+```{r random forest test, eval=T, echo=F, message=F, warning=F}
+# Test Set
+testSet <- secom_test                                              # Useful for limiting data for debug.
+testSet[c('Date','Time','data_type')] <- c(NULL)
+testSet$Status <- as.factor(testSet$Status)                        # set to factor for classification fit
+
+Status_test <- predict(fit_forest, newdata = testSet)              # predicted model vals
+
+# Save model performance for later fit comparisons.
+model_forest_test <- data.frame(testSet["Status"], Status_test)
+model_forest_test$model <- c("Random Forest - Test")
+model_forest_test <- mutate(model_forest_test, accuracy = 1 - abs(as.numeric(Status_test) - as.numeric(Status)))
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_test),  
+                       reference = as.factor(testSet$Status))
+
+```
+
+
+# Appendix A - Final Transformed Variable Distributions
+
+```{r all distributions and QQ plots, eval=T, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. A.1: Final transformed variable density and QQ plots.'}
+
+# Density + Q-Q Plots
+plot_data <- secom_trans
+sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
+distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nBins=100, QQplot=TRUE)
+```
