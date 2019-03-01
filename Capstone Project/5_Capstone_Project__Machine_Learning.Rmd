@@ -53,16 +53,17 @@ library(caTools, warn.conflicts=F, quietly=T)       # training testset split
 library(arm, warn.conflicts=F, quietly=T)           # bayesglm
 library(randomForest, warn.conflicts=F, quietly=T)  # random forest
 library(caret, warn.conflicts=F, quietly=T)         # Classification and Regression Training
+library(ROCR)                                       # Visualizing the Performance of Scoring Classifiers
 
 #  Set control flags. Prior saved data uses when set to "F".
 transformFlag <- T  # run distribution transforms? (T/F)
 imputeFlag <- F     # run imputation of missing data? (T/F)
 smoteFlag  <- T     # run class rebalancing? (T/F)
-pcaFlag    <- F     # run principle component analysis? (T/F)
+fitRfFlag <- F      # fit or read RF model files? (T) or RF fit stats csv file (F) 
 
 # Constants
-varUnique  <-  1.0  # min.% unique values per variable
-maxMissing <- 10.0  # max.% missing per variable
+varUnique  <-  1.0  # min.% unique values per variable filter criteria
+maxMissing <- 10.0  # max.% missing per variable filter criteria
 threshold <- 0.5    # level threshold for dependent variable Status
 maxSig <- 0.05      # max feature significance criteria for regression 
 set.seed(123)
@@ -84,9 +85,12 @@ set.seed(123)
 #   - nBins       # of bins per plot (default=100)
 #   - xScale      logarithmic="log10" else linear (default)
 #   - numXaxes     > 1: plot linear & log x-axes, o.w. follow xScale (default)
+#   - title       user specifiec title text
+#   - hist        histogram? (T/F)
+#   - density     density outline? (T/F)
 #-----------------------------------------------------------------------
 distMatrix <- function(data, plotVars="", factorBy="", plotDim=1, nStart=1, nPlot=length(plotVars)-nStart+1, 
-                       nBins=100, xScale="lin", numXaxes=1, title="", QQplot=FALSE) {
+                       nBins=100, xScale="lin", numXaxes=1, title="", QQplot=FALSE, hist=TRUE, density=TRUE) {
 
     nPlotFrames <- ceiling(nPlot/plotDim^2)                        # total # of plot frames
     firstVar <- nStart                                             # variable # in 1st plot position
@@ -111,22 +115,24 @@ distMatrix <- function(data, plotVars="", factorBy="", plotDim=1, nStart=1, nPlo
             } else {title = titleInit}
           
             if (factorBy == "") {                                  # no factoring
-                # Density Plot
-                print(data %>%
-                    dplyr::select(plotVars[firstVar:lastVar]) %>%
-                      gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
-                      ggplot(aes(x=value)) +
-                        geom_histogram(aes(y = ..density..), 
-                                       bins = nBins,
-                                       position = "identity",
-                                       alpha = 0.8,
-                                       color = "blue") +
-                        geom_density(alpha = 0.4) +
-                        facet_wrap(~ var, scales = "free") +
-                        ggtitle(title) +
-                        if (xScale == "log10" | m > 1) {scale_x_log10()}
-                ) #end print
-              
+
+                p <- data %>%
+                  dplyr::select(plotVars[firstVar:lastVar]) %>%
+                    gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
+                    ggplot(aes(x=value)) +
+                      facet_wrap(~ var, scales = "free") +
+                      ggtitle(title) 
+                if (hist) {p <- p +  
+                    geom_histogram(aes(y = ..density..), 
+                                   bins = nBins,
+                                   position = "identity",
+                                   alpha = 0.8,
+                                   color = "blue") 
+                } #end if (hist)
+                if (density) p <- p + geom_density(alpha = 0.4)
+                if (xScale == "log10" | m > 1) p <- p + scale_x_log10()
+                print(p)
+
                 if (QQplot) {
                     # Q-Q Plot
                     print(data %>%
@@ -139,25 +145,30 @@ distMatrix <- function(data, plotVars="", factorBy="", plotDim=1, nStart=1, nPlo
                             ggtitle("Q-Q Plot")
                     ) #end print
                 } #end if
+              
             } else {                                               # with factoring
-                print(data %>%
-                    dplyr::select( factorBy, plotVars[firstVar:lastVar]) %>%
-                      gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
-                      ggplot(aes(x=value, color=!! sym(factorBy), fill=!! sym(factorBy))) +
-                        geom_histogram(aes(y = ..density..), 
-                                       bins = nBins,
-                                       #position = "identity",
-                                       position = "dodge",
-                                       alpha = 0.1)  + 
-                        geom_density(size=1, fill=NA, alpha = 0.1) +
-                        theme_bw() +
-                        #scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9")) +
-                        #scale_color_brewer(palette="Set1", type="div") +    # colors
-                        #scale_fill_brewer(palette="Dark2", type="div") + # fill
-                        facet_wrap(~ var, scales = "free") +
-                        ggtitle(title) +
-                        if (xScale == "log10" | m > 1) {scale_x_log10()}
-                ) #end print
+              
+                p <- data %>%
+                  dplyr::select( factorBy, plotVars[firstVar:lastVar]) %>%
+                    gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
+                    ggplot(aes(x=value, color=as.factor(!! sym(factorBy)))) +
+                      theme_bw() +
+                      #scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9")) +
+                      scale_color_brewer(palette="Set1", type="div") +    # colors
+                      scale_fill_brewer(palette="Set1", type="div") + # fill
+                      facet_wrap(~ var, scales = "free") +
+                      ggtitle(title) 
+                if (hist) {p <- p + 
+                             geom_histogram(aes(y = ..density..), 
+                                            bins = nBins,
+                                            position = "identity",
+                                            #position = "dodge",
+                                            alpha = 0.1)  
+                }  #end if (hist)
+                if (density) p <- p + geom_density(size=1, fill=NA, alpha = 0.1) 
+                if (xScale == "log10" | m > 1) p <- p + scale_x_log10()
+                print(p)
+                
             }#end if (factorBy == "")
             
             print(paste("Plotting", firstVar, "through", lastVar))
@@ -197,6 +208,93 @@ flattenCorrMatrix <- function(cormat, pmat) {
     }
 data.frame(var1,var2,coeff,p)
 }
+
+#-----------------------------------------------------------------------
+# plotFitStats
+#-----------------------------------------------------------------------
+# Function that plots vector yList[j] vs vector xList[i] by vector byVarList[i] 
+# faceted xFacetList[i] x yFacetList[i].
+#   - data        dataset name
+#   - xList       vector of x-axis variable names [common index]
+#   - yList       vector of y-axis variable names 
+#   - byVarList   vector of plot parameters [common index]
+#   - xFacetList  row facet parameters [common index] 
+#   - yFacetList  column facet parameters [common index] 
+#   - xScale      logarithmic="log10" (default), linear="lin"
+#   - yScale      logarithmic="log10" (default), linear="lin"
+#-----------------------------------------------------------------------
+plotFitStats_orig <- function(data, xList="", yList="", byVarList="", xFacetList="", yFacetList="", xScale="log10", yScale="log10") {
+  
+    myCol <- rbind(brewer.pal(9, "Blues")[c(3,6,8,9)],
+                   brewer.pal(9, "Reds")[c(3,6,8,9)])
+    
+    for (i in 1:length(xList)) {
+        for (j in 1:length(yList)) {
+            title <- paste(yList[j],"vs",xList[i],"by",byVarList[i],"(row =",xFacetList[i],"x col =",yFacetList[i],") grid",sep=" ")
+            p <- data %>%
+              ggplot(aes(x=!! sym(xList[i]), y=!! sym(yList[j]), col=as.factor(!! sym(byVarList[i])))) +
+                geom_line(size=1) +
+                geom_point() +
+                scale_color_manual(values = myCol) +
+                facet_grid(vars(!! sym(xFacetList[i])), vars(!! sym(yFacetList[i]))) +
+                ggtitle(title)
+              
+            if (xScale == "log10") {p <- p + scale_x_log10() } 
+            if (yScale == "log10") {p <- p + scale_y_log10() } 
+            
+            print(p)
+        } #end for (i)
+    } #end for (j)
+} #end function
+
+#-----------------------------------------------------------------------
+# plotFitStats
+#-----------------------------------------------------------------------
+# Function that plots vector yList[j] vs vector xList[i] by vector byVarList[i] 
+# faceted xFacetList[i] x yFacetList[i].
+#   - data        dataset name
+#   - xList       vector of x-axis variable names [common index]
+#   - yList       vector of y-axis variable names 
+#   - byVarList   vector of plot parameters [common index]
+#   - xFacetList  row facet parameters [common index] 
+#   - yFacetList  column facet parameters [common index] 
+#   - gatherList  vector of variable names to gather in byVar
+#   - xScale      logarithmic="log10" (default), linear="lin"
+#   - yScale      logarithmic="log10" (default), linear="lin"
+#-----------------------------------------------------------------------
+plotFitStats <- function(data, xList="", yList="", byVarList="", xFacetList="", yFacetList="", gatherList="",xScale="log10", yScale="log10") {
+  
+    myCol <- rbind(brewer.pal(9, "Blues")[c(3,5,6,8,9)],
+                   brewer.pal(9, "Reds")[c(3,5,6,8,9)])
+    
+    for (i in 1:length(xList)) {
+        for (j in 1:length(yList)) {
+            title <- paste(yList[j],"vs",xList[i],"by",byVarList[i],"(row =",xFacetList[i],"x col =",yFacetList[i],") grid",sep=" ")
+             
+            if (!(gatherList[1] == "")) {
+                p <- data %>% 
+                  gather(key="var", value="value", gatherList) %>%
+                  ggplot(aes(x=!! sym(xList[i]), y=value, col=as.factor(var)))
+            } else {
+                p <- data %>%  
+                  ggplot(aes(x=!! sym(xList[i]), y=!! sym(yList[j]), col=as.factor(!! sym(byVarList[i])))) 
+            }
+            
+            p <- p +
+                geom_line(size=1) +
+                geom_point() +
+                scale_color_manual(values = myCol) +
+                facet_grid(vars(!! sym(xFacetList[i])), vars(!! sym(yFacetList[i]))) +
+                ggtitle(title)
+              
+            if (xScale == "log10") {p <- p + scale_x_log10() } 
+            if (yScale == "log10") {p <- p + scale_y_log10() } 
+            
+            print(p)
+        } #end for (i)
+    } #end for (j)
+} #end function
+
 ```
 
 # Project Overview 
@@ -232,7 +330,7 @@ The date used for ths project will be the [**SECOM Data Set**](http://archive.ic
 
 # Data Wrangling
 
-## Data Wrangling - Summary of Approach.
+## Summary of Approach.
 
 * Assemble csv files and update variable names and format as needed.
 * Remove irrelevant variables.
@@ -362,13 +460,15 @@ if (transformFlag) {    # set flag in setup chunk
     secom_trans$V586[which(secom_trans$V586 >   80)] <- NA  # secom_trans$Status[which(secom_wip$V586 >   80)]
     
     # Translations
-    translateVarList <- c("V78","V80","V212","V218","V220","V251","V253","V278")
-    secom_trans <- secom_trans %>% mutate_at(vars(translateVarList), ~(.+1))
+    translateVarList_1 <- c("V78","V80","V212","V218","V220","V251","V253","V278")
+    secom_trans <- secom_trans %>% mutate_at(vars(translateVarList_1), ~(.+1))
+    translateVarList_100 <- c("V60")
+    secom_trans <- secom_trans %>% mutate_at(vars(translateVarList_1), ~(.+100))
 
     # log10() Transforms
-    transformVarList_0 <- c("V1","V4","V8","V12","V13","V33","V34","V35","V36","V37","V40","V42","V60","V61","V63","V64","V65","V66","V72","V78","V80","V90")
+    transformVarList_0 <- c("V1","V4","V8","V12","V13","V33","V34","V35","V36","V37","V40","V42","V61","V63","V64","V65","V66","V72","V90")
     transformVarList_1 <- c("V122","V125","V126","V127","V133","V136","V137","V138","V139","V140","V141","V143","V144","V145","V146","V147","V148","V151","V152","V153","V154","V155","V156","V157","V160","V161","V162","V163","V164","V165","V166","V167","V168","V169","V172","V185","V186","V189","V196","V197","V198","V199")
-    transformVarList_2 <- c("V200","V201","V202","V203","V204","V205","V206","V208","V211","V212","V213","V214","V218","V220","V223","V225","V226","V228","V229","V249","V250","V251","V252","V253","V254","V271","V274","V278","V280","V281","V282","V283","V286","V287","V288","V289","V291","V292","V295","V296","V297","V298","V299")
+    transformVarList_2 <- c("V200","V201","V202","V203","V204","V205","V206","V208","V211","V213","V214","V223","V225","V226","V228","V229","V249","V250","V252","V254","V271","V274","V280","V281","V282","V283","V286","V287","V288","V289","V291","V292","V295","V296","V297","V298","V299")
     transformVarList_3 <- c("V300","V301","V302","V303","V304","V307","V321","V322","V324","V325","V332","V333","V334","V335","V336","V337","V338","V339","V340","V341","V342","V344","V349","V350","V351","V352","V353","V356","V358","V361","V363","V364","V366","V367","V368","V369","V387","V388","V390","V391","V392")
     transformVarList_4 <- c("V409","V412","V413","V414","V416","V417","V418","V419","V420","V421","V424","V425","V426","V427","V429","V430","V431","V432","V433","V434","V435","V436","V437","V438","V439","V440","V443","V455","V457","V458","V460","V461","V468","V469","V470","V471","V472","V474","V475","V476","V477","V478","V480","V481","V483","V484","V485","V486","V487","V488","V489","V490","V491","V492","V495","V497")
     transformVarList_5 <- c("V511","V521","V523","V524","V525","V526","V541","V559","V560","V561","V562","V571","V573","V574","V575","V577","V578","V584","V585","V586","V588","V589","V590")
@@ -378,21 +478,46 @@ if (transformFlag) {    # set flag in setup chunk
     secom_trans <- secom_trans %>% mutate_at(vars(transformVarList_3), funs(log10))
     secom_trans <- secom_trans %>% mutate_at(vars(transformVarList_4), funs(log10))
     secom_trans <- secom_trans %>% mutate_at(vars(transformVarList_5), funs(log10))
+    secom_trans <- secom_trans %>% mutate_at(vars(translateVarList_1), funs(log10))
+    secom_trans <- secom_trans %>% mutate_at(vars(translateVarList_100), funs(log10))
 
-    # Save imputed dataset for later use.
-    path_out <- file.path("Data", "secom_trans.csv")
+    # Convert any remaining missing values to 'NA'.
+    secom_trans[is.na(secom_trans)] <- NA                                  # Convert any NaN values to NA
+    secom_trans <- do.call(data.frame, lapply(secom_trans, function(x) {
+        replace(x, is.infinite(x), NA)                                     # Convert any Inf values to NA
+        })
+    ) #end do.call
+
+    # Scale data
+    secom_scaled <- scale(as.matrix(secom_trans[,which(grepl("^V",names(secom_trans)))]))
+    secom_scaled <- bind_cols(secom_trans['Status'], secom_trans['Date'], secom_trans['Time'], data.frame(secom_scaled))
+    
+    # Save transformed datasets for later use.
+    path_out <- file.path("Data", "secom_trans.csv")                       # saved for later use
     write.csv(secom_trans, path_out)
+    path_out <- file.path("Data", "secom_scaled.csv")                      # WIP dataset
+    write.csv(secom_scaled, path_out)
 } else {
     path_in <- file.path("Data", "secom_trans.csv")
     secom_trans <- read.csv(path_in, stringsAsFactors=F) 
-    secom_trans <- within(secom_trans, rm(X))                          # drop extra variable    
+    secom_trans <- within(secom_trans, rm(X))                              # drop extra variable    
+    path_in <- file.path("Data", "secom_scaled.csv")
+    secom_scaled <- read.csv(path_in, stringsAsFactors=F) 
+    secom_scaled <- within(secom_scaled, rm(X))                            # drop extra variable    
 } #end if (transformFlag)
 
+# Current missings status.
+pctMissing <- round(100*n_miss(secom_scaled)/(ncol(secom_scaled)*nrow(secom_scaled)), digits=2)
+paste("Need to impute remaining",pctMissing,"% of the missing total data.")
 
 # Density + Q-Q Plots
-#plot_data <- secom_trans
-#sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
+plot_data <- secom_scaled
+sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
 #distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nPlot=9, nBins=100, QQplot=TRUE)
+#distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nBins=100, QQplot=F)
+
+# Pass WIP dataset to next step.
+secom_wip <- secom_scaled
 ```
 
 
@@ -423,6 +548,12 @@ gg_miss_var(secom) +
 ## Imputation
 
 ```{r imputation, eval=T, echo=F, message=F, warning=F, results='hide'}
+
+# Scaled data
+#secom_scaled <- scale(as.matrix(secom_wip[,which(grepl("^V",names(secom_wip)))]))
+#secom_scaled <- bind_cols(secom_wip['Status'], secom_wip['Date'], secom_wip['Time'], data.frame(secom_scaled))
+#secom_wip <- secom_scaled
+
 #-----------------------------------------------------------------------
 # Imputation: MICE
 #-----------------------------------------------------------------------
@@ -442,10 +573,18 @@ if (imputeFlag) {    # set flag in setup chunk
     pred[,c("Status","Date","Time")] <- 0                                   # vars not used as predictors
 
     secom_imp <- dataSet %>%
+      mice(m=1, method='cart',      pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method='rf',      pred=pred, maxit = 250, seed=100) %>%
       #mice(m=1, method="norm",         pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="norm.nob",      pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="norm.boot",      pred=pred, maxit = 1, seed=100) %>%
       #mice(m=1, method="norm.predict", pred=pred, maxit = 1, seed=100) %>%
-      mice(m=1, method="norm.nob",      pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="quadratic",     pred=pred, maxit = 1, seed=100) %>%
       #mice(m=1, method="gamlssTF",     pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="2l.norm",         pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="2l.lmer",         pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="2l.pan",         pred=pred, maxit = 1, seed=100) %>%
+      #mice(m=1, method="2lonly.norm",         pred=pred, maxit = 1, seed=100) %>%
       complete(1) 
     
     # Save imputed dataset for later use.
@@ -459,6 +598,8 @@ if (imputeFlag) {    # set flag in setup chunk
 } #end if (imputeFlag)
 
 paste("There are", n_miss(secom_imp), "missing values remaining.")
+pctMissing <- round(100*n_miss(secom_imp)/(ncol(secom_imp)*nrow(secom_imp)), digits=2)
+paste("Need to impute remaining",pctMissing,"% of the missing total data.")
 
 # Merge data with shadow matrix.
 secom_imp_bound <- cbind(secom_imp, secom_shadow)
@@ -604,10 +745,10 @@ ggplot(plot_data, aes(sample=V22)) +
   geom_qq_line(size=1.5, color="red") +
   ggtitle("Q-Q Plot for 'V22'")
 # Q-Q Plot
-ggplot(plot_data, aes(sample=V55)) +
+ggplot(plot_data, aes(sample=V52)) +
   geom_qq(size=2) +
   geom_qq_line(size=1.5, color="red") +
-  ggtitle("Q-Q Plot for 'V55'")
+  ggtitle("Q-Q Plot for 'V52'")
 
 ```
 
@@ -755,113 +896,237 @@ ggplot(corr_dv, aes(reorder(var2,coeff), coeff)) +
 
 # Modeling
 
-## Baseline Logistic Regression Model
+## Summary of Approach.
 
-All available features.
+* 3-part data split to train/tune/test (85%/10%/5%) model fits.
+* Baseline logistic regression model fit.
+* Iterative logistic regression model fit based on fit coefficient significance.
+* Balance primary pass/fail variable (Status) classes using SMOTE.
+* Rerun iterative logistic regression model fit.
+* Random Forest classification model fit.
 
-```{r split dataset, echo=F, message=F, warning=F, results='hide'}
+## Data Splitting
+
+The data approach taken here was to split the available data into 3 parts for initial model training (85%), model tuning (10%) and final test verification (5%). Table 4.1 below shows the breakdown of available data by number of observations and percentage of the total avaialble dataset, and the number of pass/fail observations for the datasets used here. The greater than 10:1 pass:fail delta in these datasets is notable and addressed further into the analysis. 
+
+```{r split dataset, echo=F, message=F, warning=F, results='show', out.width='50%'}
 #-----------------------------------------------------------------------
 # Split Training and Test Sets
 #-----------------------------------------------------------------------
-split <- sample.split(secom_wip$Status, SplitRatio = 0.75)
-
-# Unscaled data
+# 2-Part Split
+#split <- sample.split(secom_wip$Status, SplitRatio = 0.75)
 #secom_train <- secom_wip[which(split == TRUE),]
-#secom_test <- secom_wip[which(split == FALSE),]
+#secom_tune <- secom_wip[which(split == FALSE),]
 
-# Scaled data
-secom_scaled <- scale(as.matrix(secom_wip[,which(grepl("^V",names(secom_wip)))]))
-secom_scaled <- bind_cols(secom_wip['Status'], data.frame(secom_scaled))
-secom_train <- secom_scaled[which(split == TRUE),]
-secom_test <- secom_scaled[which(split == FALSE),]
+# 3-Part Split
+split1 <- sample.split(secom_wip$Status, SplitRatio = 0.85)
+secom_train <- secom_wip[which(split1 == TRUE),]
+temp_test <- secom_wip[which(split1 == FALSE),]
+split2 <- sample.split(temp_test$Status, SplitRatio = 2/3)
+secom_tune <- temp_test[which(split2 == TRUE),]
+secom_verify <- temp_test[which(split2 == FALSE),]
 
+secom_table <- table(secom_wip$Status)
+train_table <- table(secom_train$Status)
+tune_table <- table(secom_tune$Status)
+test_table <- table(secom_verify$Status)
+secom_state <- c(nrow(secom_wip),round(100,2),as.integer(secom_table[1]),as.integer(secom_table[2]))
+train_state <- c(nrow(secom_train),round(100*nrow(secom_train)/nrow(secom_wip),2),as.integer(train_table[1]),as.integer(train_table[2]))
+tune_state <- c(nrow(secom_tune),round(100*nrow(secom_tune)/nrow(secom_wip),2),as.integer(tune_table[1]),as.integer(tune_table[2]))
+test_state <- c(nrow(secom_verify),round(100*nrow(secom_verify)/nrow(secom_wip),2),as.integer(test_table[1]),as.integer(test_table[2]))
+status_state <- as.data.frame(rbind(secom_state,train_state,tune_state,test_state))
+colnames(status_state) <- c("Rows","Percent","Pass","Fail")
+rownames(status_state) <- c("All Data","Train","Tune","Test")
+
+kable(status_state, caption = 'Table 4.1: Data split and Status class totals.') %>%
+  kable_styling(bootstrap_options = "striped", full_width = F)
 ```
 
+## Baseline Logistic Regression Model
 
-```{r baseline logistic model, echo=F, message=F, warning=F}
+### Training 
+
+```{r baseline logistic model train, echo=F, message=F, warning=F}
 #-----------------------------------------------------------------------
 # Baseline Model: bayesglm
 #-----------------------------------------------------------------------
-dataSet <- secom_train #[1:50]                                       # Useful for limiting data for debug.
-dataSet[c('Date','Time')] <- c(NULL)
+trainData <- secom_train 
+trainData[c('Date','Time')] <- c(NULL)
 
 # Baseline glm model fit.
-fit_glm_baseline_1 <- bayesglm(Status ~ . , data=dataSet, family="binomial", maxit=200) # baseline glm fit model
+fit_glm_baseline_1 <- bayesglm(Status ~ . , data=trainData, family="binomial", maxit=200) # baseline glm fit model
 Status_pred <- fitted(fit_glm_baseline_1)                          # predicted model vals
 Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
 Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
 
 # Other useful functions 
-summary(fit_glm_baseline_1)                                        # show results
-#coefficients(fit_lm_baseline)                                     # model coefficients
-#confint(fit_lm_baseline, level=0.95)                              # CIs for model parameters 
-#fitted(fit_lm_baseline)                                           # predicted values
-#residuals(fit_lm_baseline)                                        # residuals
-#anova(fit_lm_baseline)                                            # anova table 
-#vcov(fit_lm_baseline)                                             # covariance matrix for model parameters 
-#influence(fit_lm_baseline)                                        # regression diagnostics
-
-# Save model performance for later fit comparisons.
-model_glm_baseline_1 <- data.frame(dataSet["Status"], Status_pred)
-model_glm_baseline_1$model <- c("glm: All Coeff.")
-model_glm_baseline_1 <- mutate(model_glm_baseline_1, accuracy = 1 - abs(Status_pred - Status))
-
-#ggplot(model_glm_baseline_1, aes(x = model, fill = factor(accuracy))) +
-#  geom_bar(position = "fill") +
-#  guides(fill = guide_legend(title = "Model Performance")) +
-#  scale_fill_discrete(labels = paste(c("fail", "pass")))
+summary <- summary(fit_glm_baseline_1)                               # summary results
+AIC <- round(as.double(summary[5],1))
+#coefficients(fit_lm_baseline_1)                                     # model coefficients
+#confint(fit_lm_baseline_1, level=0.95)                              # CIs for model parameters 
+#fitted(fit_lm_baseline_1)                                           # predicted values
+#residuals(fit_lm_baseline_1)                                        # residuals
+#anova(fit_lm_baseline_1)                                            # anova table 
+#vcov(fit_lm_baseline_1)                                             # covariance matrix for model parameters 
+#influence(fit_lm_baseline_1)                                        # regression diagnostics
 
 # Confusion Matrix
-caret::confusionMatrix(data = as.factor(Status_pred),  
-                reference = as.factor(dataSet$Status))
+cm <-caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(trainData$Status))
+ACC <- round(cm$overall[1],4)                                      # accuracy
+TPR <- round(cm$byClass[1],4)                                      # true positive rate (sensitivity,recall)
+TNR <- round(cm$byClass[2],4)                                      # true negative rate (specificity)
+
 ```
 
-Test set results.
+For this initial baseline model all available features are used for a logistic regression. The glm model was unable to converge consistently so the bayesglm model was chosen instead. The bayesglm model uses the Student-t distribution instead of the normal distribution which better describes the SECOM variable distributions in this work. Due to the number of available features the fitting results are lenghy so are shown in Appendix C. The model's low AIC score  of `r AIC` indicates a parsimonious model. The confusion matrix results below show the fit accuracy = `r ACC`, sensitivity (TPR) = `r TPR` and selectivity (TNR) = `r TNR`. Since the purpose of the model is to accurately predict failures, TPR is a primary measure of the model capability. Overall the base training model is very good.
 
-```{r baseline logistic model test, eval=T, echo=F, message=F, warning=F}
+```{r baseline logistic model train confusion matrix, echo=F, message=F, warning=F}
+cm
+```
+
+```{r baseline logistic model initial test, eval=T, echo=F, message=F, warning=F}
 
 # Test Set
-testSet <- secom_test                                              # Useful for limiting data for debug.
-testSet[c('Date','Time','data_type')] <- c(NULL)
+#testData <- rbind(secom_tune,secom_verify)
+testData <- secom_tune
+testData[c('Date','Time','data_type')] <- c(NULL)
 
-Status_test <- predict(fit_glm_baseline_1, 
-                       newdata = testSet, 
+Status_pred <- predict(fit_glm_baseline_1, 
+                       newdata = testData, 
                        type = "response")                          # predicted model 
-Status_test[Status_test < threshold] <- 0                          # reset "pass" level
-Status_test[Status_test >= threshold] <- 1                         # reset "fail" level
-
-# Save model performance for later fit comparisons.
-model_glm_baseline_1_test <- data.frame(testSet["Status"], Status_test)
-model_glm_baseline_1_test$model <- c("glm - Test")
-model_glm_baseline_1_test <- mutate(model_glm_baseline_1_test, accuracy = 1 - abs(as.numeric(Status_test) - as.numeric(Status)))
+Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
 
 # Confusion Matrix
-caret::confusionMatrix(data = as.factor(Status_test),  
-                       reference = as.factor(testSet$Status))
+cm <-caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(testData$Status))
+ACC <- round(cm$overall[1],4)                                      # accuracy
+TPR <- round(cm$byClass[1],4)                                      # true positive rate (sensitivity,recall)
+TNR <- round(cm$byClass[2],4)                                      # true negative rate (specificity)
 
 ```
 
+After running the tuning data against the model the accuracy drops to `r ACC` and TPR to `r TPR`. Overall this is still good but TNR is still very low. 
+
+```{r baseline logistic model init test confusion matrix, echo=F, message=F, warning=F}
+cm
+```
+
+### ROC Analysis
+
+```{r baseline logistic model ROC, eval=T, echo=F, message=F, warning=F, results='hide'}
+
+tuneData <- secom_tune
+tuneData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_1, 
+                       newdata = tuneData, 
+                       type = "response")                          # predicted model 
+
+ROCRpred = ROCR::prediction(Status_pred, tuneData$Status)
+ROCRperf = ROCR::performance(ROCRpred, measure="tpr", x.measure="fpr")
+AUC <- round(as.numeric(ROCR::performance(ROCRpred, "auc")@y.values),4)
+print(paste("AUC = ",AUC,sep=""))
+
+```
+
+The area under the receiver operating characteristic (ROC) curve, or area under the curve (AUC), illustrates the diagnostic ability of a binary classifier model as its discrimination threshold is varied between 0 and 1. The curve is a plot of the true positive rate (TPR, sensitivity) against the false positive rate (1 - TNR, 1 - specificity) with the range of AUC between 0.5 and 1. A score of 0.5 corresponds to having little discernability or little predictability better than chance and is represented by a 45 degree line. A score of 1 corresponds to perfect discernability and is represented by a curve that tents to the upper lefthand corner. For this model AUC = `r AUC` and is plotted below. 
+
+
+```{r baseline logistic model ROC plot, eval=T, echo=F, message=F, warning=F, results='hide'}
+plot(ROCRperf, colorize = TRUE, print.cutoffs.at=seq(0,1,by=0.1))
+
+```
+
+### Threshold Tuning
+
+```{r baseline logistic model ROC tune, eval=T, echo=F, message=F, warning=F}
+
+# Set new threshold based on above ROC analysis.
+threshold_glm_baseline <- 0.01
+
+# Test Set
+#testData <- rbind(secom_tune,secom_verify)
+tuneData <- secom_tune
+tuneData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_1, 
+                       newdata = tuneData, 
+                       type = "response")                          # predicted model 
+Status_pred[Status_pred < threshold_glm_baseline] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold_glm_baseline] <- 1                         # reset "fail" level
+
+# Confusion Matrix
+cm <- caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(tuneData$Status))
+ACC <- round(cm$overall[1],4)                                      # accuracy
+TPR <- round(cm$byClass[1],4)                                      # true positive rate (sensitivity,recall)
+TNR <- round(cm$byClass[2],4)                                      # true negative rate (specificity)
+
+```
+
+Setting the threshold to `r threshold_glm_baseline` increases TNR to `r TNR`, but decreases accuracy to `r ACC` and TPR to `r TPR`.
+
+```{r baseline logistic model ROC tune confusion matrix, eval=T, echo=F, message=F, warning=F}
+cm
+```
+
+### Test
+
+```{r baseline logistic model verify, eval=T, echo=F, message=F, warning=F}
+
+# Test Set
+#testData <- rbind(secom_tune,secom_verify)
+testData <- secom_verify
+testData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_1, 
+                       newdata = testData, 
+                       type = "response")                          # predicted model 
+Status_pred[Status_pred < threshold_glm_baseline] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold_glm_baseline] <- 1                         # reset "fail" level
+
+# Confusion Matrix
+cm <-caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(testData$Status))
+ACC <- round(cm$overall[1],4)                                      # accuracy
+TPR <- round(cm$byClass[1],4)                                      # true positive rate (sensitivity,recall)
+TNR <- round(cm$byClass[2],4)                                      # true negative rate (specificity)
+
+```
+
+Test data results below show accuracy = `r ACC`, TPR = `r TPR` and TNR = `r TNR`.
+
+```{r baseline logistic model ROC verify confusion matrix, eval=T, echo=F, message=F, warning=F}
+cm
+```
+
+## Iterative Logistic Regression Model
+
+### Training
 
 ```{r iterative baseline logistic model, eval=T, echo=F, message=F, warning=F}
 #-----------------------------------------------------------------------
 # Logistic Model (iterative coefficient optimization) : bayesglm
 #-----------------------------------------------------------------------
-dataSet <- secom_train #[1:50]                                       # Useful for limiting data for debug.
-dataSet[c('Date','Time','Yield')] <- c(NULL)
+trainData <- secom_train 
+trainData[c('Date','Time','Yield')] <- c(NULL)
 
 # Initialize loop variables.
-loopCount <- 1                                                     # loop counter
-maxPval <- 1                                                       # intial max. p-value
-fitStats <- data.frame(loopCount=0,Fstat=0,df=0,Rsq=0)             # loop stat dataframe
+loopCount <- 1                                                         # loop counter
+maxPval <- 1                                                           # intial max. p-value
+fitStats <- data.frame(loopCount=0,Fstat=0,df=0,Rsq=0)                 # loop stat dataframe
+pathname <- "Data/glm_regression_models"                               # base path to glm model files
+modelFile <- "fit_glm_baseline_2.rda"
+fitConstFile <- "glm_fit_constants.csv"
 
-if(file.exists("Data/fit_glm_baseline_2.rda")) {
+if(file.exists(file.path(pathname, modelFile))) {
   
-    load("Data/fit_glm_baseline_2.rda")                            # load model
+    load(file.path(pathname, modelFile))                               # load model
+    c <- read.csv(file.path(pathname, fitConstFile), stringsAsFactors=F) # load fit constants
+    c <- within(c, rm(X))                                              # drop extra variable    
   
-} else {                                                           # else refit model
+} else {                                                               # else refit model
   
     while (maxPval > maxSig) {
-        fit_glm_baseline_2 <- bayesglm(Status ~ . , data=dataSet, family="binomial", maxit=200)   # baseline glm fit model
+        fit_glm_baseline_2 <- bayesglm(Status ~ . , data=trainData, family="binomial", maxit=200)   # baseline glm fit model
         c <- data.frame(coef(summary(fit_glm_baseline_2)))
         vars <- rownames(c)
         c <- bind_cols(data.frame(vars, stringsAsFactors=F), c)
@@ -872,26 +1137,26 @@ if(file.exists("Data/fit_glm_baseline_2.rda")) {
         
         maxPval <- max(abs(c$Pr...z..))                                # current max p-value
         dropVar <- c$vars[which(c(abs(c$Pr...z..) == maxPval))]        # var name with max p-value
-        dataSet[dropVar] <- NULL
+        trainData[dropVar] <- NULL
         
-        print(paste("Loop#:",loopCount, "  Var. Count =", length(dataSet)))
+        print(paste("Loop#:",loopCount, "  Var. Count =", length(trainData)))
         maxPval <- max(abs(c$Pr...z..))                                # current p-value
         loopCount <- loopCount + 1
     } #end while
     
-    save(fit_glm_baseline_2, file = "Data/fit_glm_baseline_2.rda")
-
+    save(fit_glm_baseline_2, file=file.path(pathname, modelFile))
+    write.csv(c, file.path(pathname, fitConstFile))
+    
 } # end if file.exists
 
 Status_pred <- fitted(fit_glm_baseline_2)                          # predicted model vals
+#Status_pred <- predict(fit_glm_baseline_2)                          # predicted model vals
 Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
 Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
 
-#ggplot(fitStats, aes(x=fitStats$df, y=fitStats$Rsq)) +
-#  geom_point()
-
 # Other useful functions 
-summary(fit_glm_baseline_2)                                       # show results
+summary <- summary(fit_glm_baseline_2)                               # summary results
+AIC <- round(as.double(summary[5],1))
 #coefficients(fit_glm_baseline_2)                                  # model coefficients
 #confint(fit_glm_baseline_2, level=0.95)                           # CIs for model parameters 
 #fitted(fit_glm_baseline_2)                                        # predicted values
@@ -900,52 +1165,136 @@ summary(fit_glm_baseline_2)                                       # show results
 #vcov(fit_glm_baseline_2)                                          # covariance matrix for model parameters 
 #influence(fit_glm_baseline_2)                                     # regression diagnostics
 
-# Save model performance for later fit comparisons.
-model_glm_baseline_2 <- data.frame(dataSet["Status"], Status_pred)
-model_glm_baseline_2$model <- c("glm: Iter. Sig. Coeff.")
-model_glm_baseline_2 <- mutate(model_glm_baseline_2, accuracy = 1 - abs(Status_pred - Status))
-sigVars_glm_baseline_2 <- rownames(data.frame(fit_glm_baseline_2$coefficients))[c(-1)]  # significant coeff. names
+# Confusion Matrix
+cm <- caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(trainData$Status))
+ACC <- round(cm$overall[1],4)                                      # accuracy
+TPR <- round(cm$byClass[1],4)                                      # true positive rate (sensitivity,recall)
+TNR <- round(cm$byClass[2],4)                                      # true negative rate (specificity)
 
+```
+
+In the original logistic fit many coefficients showed very little signicance, meaning their their significance values were > 0.05. In the following fit approach the logistic regression is performed iteratively with the least significant variable removed after each iteration. This assures that only the most significant features remain. Please refer to Appendix D for model output details. This approach shows a significant improvement in AIC score of `r AIC`. The accuracy = `r ACC` and TPR = `r TPR` are also very good, but TNR = `r TNR` has dropped significantly compared with the base model. Confusion matrix results and a plot of most to least significant model features are shown below.
+
+```{r iterative baseline logistic model confusion matrix, eval=T, echo=F, message=F, warning=F}
+cm
+```
+
+
+```{r iterative baseline logistic model plots, echo=F, warning=F, message=F, results='hide', out.width='75%', fig.align='center', fig.show='hold', fig.cap='Significant model features after SMOTE synthesis.'}
 #-----------------------------------------------------------------------
 # Significant Model Features 
 #-----------------------------------------------------------------------
-ggplot(c, aes(reorder(vars,Std..Error), Std..Error)) +
+#ggplot(c, aes(reorder(vars,Std..Error), Std..Error)) +
+#  geom_point(size=2) +
+#  scale_y_log10() +
+#  theme(axis.text.x  = element_text(size = 8, angle = 60, vjust = 0.5)) +
+#  labs(title = "Significant Model Features",
+#       x = "Variable Names",
+#       y = "Std. Error")
+
+ggplot(c, aes(reorder(vars,Pr...z..), Pr...z..)) +
   geom_point(size=2) +
   scale_y_log10() +
   theme(axis.text.x  = element_text(size = 8, angle = 60, vjust = 0.5)) +
   labs(title = "Significant Model Features",
        x = "Variable Names",
-       y = "Std. Error")
+       y = "Probability")
 
-# Confusion Matrix
-caret::confusionMatrix(data = as.factor(Status_pred),  
-                reference = as.factor(dataSet$Status))
+
 ```
 
-Test set results.
 
-```{r baseline iterated logistic model test, eval=T, echo=F, message=F, warning=F}
+
+```{r baseline iterated logistic model initial test, eval=T, echo=F, message=F, warning=F}
 
 # Test Set
-testSet <- secom_test                                              # Useful for limiting data for debug.
-testSet[c('Date','Time','data_type')] <- c(NULL)
+#testData <- rbind(secom_tune,secom_verify)
+testData <- secom_tune
+testData[c('Date','Time','data_type')] <- c(NULL)
 
-Status_test <- predict(fit_glm_baseline_2, 
-                       newdata = testSet, 
+Status_pred <- predict(fit_glm_baseline_2, 
+                       newdata = testData, 
                        type = "response")                          # predicted model 
-Status_test[Status_test < threshold] <- 0                          # reset "pass" level
-Status_test[Status_test >= threshold] <- 1                         # reset "fail" level
-
-# Save model performance for later fit comparisons.
-model_glm_baseline_2_test <- data.frame(testSet["Status"], Status_test)
-model_glm_baseline_2_test$model <- c("glm - Test")
-model_glm_baseline_2_test <- mutate(model_glm_baseline_2_test, accuracy = 1 - abs(as.numeric(Status_test) - as.numeric(Status)))
+Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
 
 # Confusion Matrix
-caret::confusionMatrix(data = as.factor(Status_test),  
-                       reference = as.factor(testSet$Status))
+cm <- caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(testData$Status))
+ACC <- round(cm$overall[1],4)                                      # accuracy
+TPR <- round(cm$byClass[1],4)                                      # true positive rate (sensitivity,recall)
+TNR <- round(cm$byClass[2],4)                                      # true negative rate (specificity)
 
 ```
+
+After running the tuning data against the model, accuracy, TPR and TNR improve slightly. 
+
+```{r baseline iterated logistic model initial test confusion matrix, eval=T, echo=F, message=F, warning=F}
+cm
+```
+
+### ROC Analysis
+
+```{r baseline iterated logistic model ROC, eval=T, echo=F, message=F, warning=F}
+
+tuneData <- secom_tune
+tuneData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_2, 
+                       newdata = tuneData, 
+                       type = "response")                          # predicted model 
+
+ROCRpred = ROCR::prediction(Status_pred, tuneData$Status)
+ROCRperf = ROCR::performance(ROCRpred, measure="tpr", x.measure="fpr")
+AUC <- as.numeric(ROCR::performance(ROCRpred, "auc")@y.values)
+print(paste("AUC = ",AUC,sep=""))
+
+plot(ROCRperf, colorize = TRUE, print.cutoffs.at=seq(0,1,by=0.1))
+
+```
+
+### Threshold Tuning
+
+```{r baseline iterated logistic model ROC test, eval=T, echo=F, message=F, warning=F}
+
+# Set new threshold based on above ROC analysis.
+threshold_glm_baseline <- 0.057
+
+# Test Set
+#testData <- rbind(secom_tune,secom_verify)
+tuneData <- secom_tune
+tuneData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_2, 
+                       newdata = tuneData, 
+                       type = "response")                                       # predicted model 
+Status_pred[Status_pred < threshold_glm_baseline] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold_glm_baseline] <- 1                         # reset "fail" level
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(tuneData$Status))
+
+```
+
+### Test
+
+```{r baseline iterated logistic model verify, eval=T, echo=F, message=F, warning=F}
+
+# Test Set
+#testData <- rbind(secom_tune,secom_verify)
+testData <- secom_verify
+testData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_2, 
+                       newdata = testData, 
+                       type = "response")                                       # predicted model 
+Status_pred[Status_pred < threshold_glm_baseline] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold_glm_baseline] <- 1                         # reset "fail" level
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(testData$Status))
+
+```
+
 
 
 ```{r glm baseline model comparison, eval=F, echo=F, message=F, warning=F}
@@ -966,21 +1315,20 @@ ggplot(model_comp, aes(x = model, fill = factor(accurac))) +
 #-----------------------------------------------------------------------
 # Status Rebalancing: smotefamily
 #-----------------------------------------------------------------------
-dataSet <- secom_train #[1:50]                                       # Useful for limiting data for debug.
+trainData <- secom_train #[1:50]                                   # Useful for limiting data for debug.
 
 # Once rebalanced values are final, set smoteFlag=F to read them from file.
-if (smoteFlag) {                                   # set flag in setup chunk
-    #dataSet <- secom_imp #[1:10]  # Useful for limiting data for debug.
-    sensorVars <- names(dataSet)[grepl("^V",names(dataSet)) & !grepl("_NA$",names(dataSet))]
+if (smoteFlag) {                                                   # set flag in setup chunk
+    sensorVars <- names(trainData)[grepl("^V",names(trainData)) & !grepl("_NA$",names(trainData))]
 
-    smote_data <- SMOTE(dataSet[sensorVars],                       # feature values
-                        dataSet$Status,                            # class labels
-                        K = 25, dup_size = 0)                      # function parameters
+    smote_data <- SMOTE(trainData[sensorVars],                     # feature values
+                        trainData$Status,                          # class labels
+                        K = 20, dup_size = 0)                       # function parameters
     syn_data <- smote_data$syn_data                                # synthetic minority class data
     syn_data <- within(syn_data, rm(class))                        # drop class variable
     syn_data$Status <- 1                                           # all synthesized data are Status = "fail"
    
-    secom_smote <- bind_rows(original = dataSet,
+    secom_smote <- bind_rows(original = trainData,
                              synthetic = syn_data,
                              .id = "data_type")
 
@@ -990,7 +1338,7 @@ if (smoteFlag) {                                   # set flag in setup chunk
 } else {
     path_in <- file.path("Data", "secom_smote.csv")
     secom_smote <- read.csv(path_in, stringsAsFactors=F) 
-    secom_smote <- within(secom_smote, rm(X))      # drop extra variable    
+    secom_smote <- within(secom_smote, rm(X))                      # drop extra variable    
     #secom_smote$Status <- as.factor(secom_smote$Status)
 } #end if (smoteFlag)
 
@@ -1005,271 +1353,727 @@ secom_train_smote <- secom_smote                                   # start & end
 ```{r sample smote distribution, echo=F, warning=F, message=F, results='hide', out.width='100%', fig.align='center', fig.cap='Example distribution before and after SMOTE synthesis.'}
 # Review results.
 sensorVars <- names(secom_smote)[grepl("^V",names(secom_smote)) & !grepl("_NA$",names(secom_smote))]
-distMatrix(secom_smote, plotVars=sensorVars, factorBy="data_type", plotDim=3, nStart=1, nPlot=9, nBins=100, numXaxes=1)
+#distMatrix(secom_smote, plotVars=sensorVars, factorBy="data_type", plotDim=3, nStart=1, nPlot=9, nBins=100, numXaxes=1)
+distMatrix(secom_smote %>% filter(Status == 1), plotVars=sensorVars, factorBy="data_type", plotDim=3, nStart=1, nPlot=9, nBins=100, numXaxes=1, hist=F)
 ```
+
+## Iterative Logistic Regression Model Revisited
+
+### Training 
+
+```{r iterative smote logistic model, eval=T, echo=F, message=F, warning=F}
+#-----------------------------------------------------------------------
+# Logistic Model (iterative coefficient optimization) : bayesglm
+#-----------------------------------------------------------------------
+trainData <- secom_train_smote 
+trainData[c('Date','Time','Yield','data_type')] <- c(NULL)
+
+# Initialize loop variables.
+loopCount <- 1                                                         # loop counter
+maxPval <- 1                                                           # intial max. p-value
+fitStats <- data.frame(loopCount=0,Fstat=0,df=0,Rsq=0)                 # loop stat dataframe
+pathname <- "Data/glm_regression_smote_models"                               # base path to glm model files
+modelFile <- "fit_glm_baseline_3.rda"
+fitConstFile <- "glm_smote_fit_constants.csv"
+
+if(file.exists(file.path(pathname, modelFile))) {
+  
+    load(file.path(pathname, modelFile))                               # load model
+    c <- read.csv(file.path(pathname, fitConstFile), stringsAsFactors=F) # load fit constants
+    c <- within(c, rm(X))                                              # drop extra variable    
+  
+} else {                                                               # else refit model
+  
+    while (maxPval > maxSig) {
+        fit_glm_baseline_3 <- bayesglm(Status ~ . , data=trainData, family="binomial", maxit=200)   # baseline glm fit model
+        c <- data.frame(coef(summary(fit_glm_baseline_3)))
+        vars <- rownames(c)
+        c <- bind_cols(data.frame(vars, stringsAsFactors=F), c)
+        c <- c[c(-1),]                                                 # Remove intercept.
+        
+        df <- summary(fit_glm_baseline_3)$df[1]                        # degrees of freedom
+        fitStats[loopCount,] <- c(loopCount, df)
+        
+        maxPval <- max(abs(c$Pr...z..))                                # current max p-value
+        dropVar <- c$vars[which(c(abs(c$Pr...z..) == maxPval))]        # var name with max p-value
+        trainData[dropVar] <- NULL
+        
+        print(paste("Loop#:",loopCount, "  Var. Count =", length(trainData)))
+        maxPval <- max(abs(c$Pr...z..))                                # current p-value
+        loopCount <- loopCount + 1
+    } #end while
+    
+    save(fit_glm_baseline_3, file=file.path(pathname, modelFile))
+    write.csv(c, file.path(pathname, fitConstFile))
+    
+} # end if file.exists
+
+#Status_pred <- fitted(fit_glm_baseline_3)                          # predicted model vals
+Status_pred <- predict(fit_glm_baseline_3)                          # predicted model vals
+Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
+
+# Other useful functions 
+summary <- summary(fit_glm_baseline_3)                               # summary results
+AIC <- round(as.double(summary[5],1))
+#coefficients(fit_glm_baseline_3)                                  # model coefficients
+#confint(fit_glm_baseline_3, level=0.95)                           # CIs for model parameters 
+#fitted(fit_glm_baseline_3)                                        # predicted values
+#residuals(fit_glm_baseline_3)                                     # residuals
+#anova(fit_glm_baseline_3)                                         # anova table 
+#vcov(fit_glm_baseline_3)                                          # covariance matrix for model parameters 
+#influence(fit_glm_baseline_3)                                     # regression diagnostics
+
+#-----------------------------------------------------------------------
+# Significant Model Features 
+#-----------------------------------------------------------------------
+#ggplot(c, aes(reorder(vars,Std..Error), Std..Error)) +
+#  geom_point(size=2) +
+#  scale_y_log10() +
+#  theme(axis.text.x  = element_text(size = 8, angle = 60, vjust = 0.5)) +
+#  labs(title = "Significant Model Features",
+#       x = "Variable Names",
+#       y = "Std. Error")
+
+ggplot(c, aes(reorder(vars,Pr...z..), Pr...z..)) +
+  geom_point(size=2) +
+  scale_y_log10() +
+  theme(axis.text.x  = element_text(size = 8, angle = 60, vjust = 0.5)) +
+  labs(title = "Significant Model Features",
+       x = "Variable Names",
+       y = "Probability")
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(trainData$Status))
+```
+
+Test set results.
+
+```{r iterative smote logistic model initial test, eval=T, echo=F, message=F, warning=F}
+
+# Test Set
+#testData <- rbind(secom_tune,secom_verify)
+testData <- secom_tune
+testData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_3, 
+                       newdata = testData, 
+                       type = "response")                          # predicted model 
+Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(testData$Status))
+
+```
+
+### ROC Analysis
+
+```{r iterative smote logistic model ROC, eval=T, echo=F, message=F, warning=F}
+
+tuneData <- secom_tune
+tuneData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_3, 
+                       newdata = tuneData, 
+                       type = "response")                          # predicted model 
+
+ROCRpred = ROCR::prediction(Status_pred, tuneData$Status)
+ROCRperf = ROCR::performance(ROCRpred, measure="tpr", x.measure="fpr")
+AUC <- as.numeric(ROCR::performance(ROCRpred, "auc")@y.values)
+print(paste("AUC = ",AUC,sep=""))
+
+plot(ROCRperf, colorize = TRUE, print.cutoffs.at=seq(0,1,by=0.1))
+
+```
+
+### Threshold Tuning
+
+```{r iterative smote logistic model ROC test, eval=T, echo=F, message=F, warning=F}
+
+# Set new threshold based on above ROC analysis.
+threshold_glm_smote <- 0.005
+
+# Test Set
+#testData <- rbind(secom_tune,secom_verify)
+tuneData <- secom_tune
+tuneData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_3, 
+                       newdata = tuneData, 
+                       type = "response")                                       # predicted model 
+Status_pred[Status_pred < threshold_glm_smote] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold_glm_smote] <- 1                         # reset "fail" level
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(tuneData$Status))
+
+```
+
+### Test
+
+```{r iterative smote logistic model verify, eval=T, echo=F, message=F, warning=F}
+
+# Test Set
+#testData <- rbind(secom_tune,secom_verify)
+testData <- secom_verify
+testData[c('Date','Time','data_type')] <- c(NULL)
+
+Status_pred <- predict(fit_glm_baseline_3, 
+                       newdata = testData, 
+                       type = "response")                                       # predicted model 
+Status_pred[Status_pred < threshold_glm_smote] <- 0                          # reset "pass" level
+Status_pred[Status_pred >= threshold_glm_smote] <- 1                         # reset "fail" level
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(testData$Status))
+
+```
+
 
 ## Random Forest Model
 
-Training results.
-
-```{r random forest test matrix, eval=T, echo=F, message=F, warning=F}
+```{r random forest fit matrix, eval=T, echo=F, message=F, warning=F, results='hide'}
 #-----------------------------------------------------------------------
 # Random Forest : randomForest
 #-----------------------------------------------------------------------
 # Training Set
-dataSet <- secom_train_smote #[1:50]                               # Normalized
-dataSet[c('Date','Time','data_type')] <- c(NULL)
-dataSet$Status <- as.factor(dataSet$Status)                        # set to factor for classification fit
+trainData <- secom_train_smote #[1:50]                             # Normalized
+trainData[c('Date','Time','data_type')] <- c(NULL)
+trainData$Status <- as.factor(trainData$Status)                    # set to factor for classification fit
 
-# Test Set
-testSet <- secom_test                                              # Normalized
-testSet[c('Date','Time','data_type')] <- c(NULL)
-testSet$Status <- as.factor(testSet$Status)                        # set to factor for classification fit
+# Tune Set
+tuneData <- secom_tune                                             # Normalized
+tuneData[c('Date','Time','data_type')] <- c(NULL)
+tuneData$Status <- as.factor(tuneData$Status)                      # set to factor for classification fit
 
-# RF tuning parameters
-nodesizes <- c(1,4,10,40,100)
-ntrees <- c(1,4,10,40,100,400)
-maxits <- c(10,40,100,400)
-mtrys <- c(1,4,10,40,100,400)
+pathname <- "Data/rf_classification_models"                        # base path to rf model files
+fitConstFile <- "rf_fit_constants.csv"                             # csv file of RF fit to save time when plotting
 
-# Define empty stats dataframe.
-rf_fit_stats <- data.frame(nodesize=integer(),
-                           ntree=integer(),
-                           maxit=integer(),
-                           mtry=integer(),
-                           oob_err=double(),
-                           oob_0=double(),
-                           oob_1=double(),
-                           RMS_err=double(),
-                           RMS_err_0=double(),
-                           RMS_err_1=double(),
-                           var_err=double(),
-                           stdev_err=double(),
-                           stringsAsFactors=FALSE)
-
-for (nodesize in nodesizes) {
-    for (ntree in ntrees) {
-        for (maxit in maxits) {
-            for (mtry in mtrys) {
-                
-                fileName <- paste("Data/rf_nodesize=",nodesize,"_ntree=",ntree,"_maxit=",maxit,"_mtry=",mtry,".rda", sep="")
-                
-                if(file.exists(fileName)) {
-                    
-                    load(fileName)                                             # load model
-                     
-                } else {                                                       # else refit model
-                     
-                    fit_forest <- randomForest(Status ~ ., data = dataSet, 
-                                               nodesize = nodesize, 
-                                               ntree = ntree,
-                                               maxit = maxit,
-                                               mtry = mtry,
-                                               importance = TRUE,
-                                               keep.forest = TRUE)
-                    
-                    save(fit_forest, file = fileName)
-                } #end if
-                
-                # Training Fit Errors
-                oob_err <- fit_forest$err.rate[ntree,1]
-                oob_0   <- fit_forest$err.rate[ntree,2]
-                oob_1   <- fit_forest$err.rate[ntree,3]
-                
-                # Test Fit Errors
-                Status_pred <- predict(fit_forest, newdata = testSet)              # predicted model vals
-                RMS_err <- mean((as.numeric(testSet$Status) - as.numeric(Status_pred))^2)
-                RMS_err_0 <- mean((as.numeric(testSet$Status[which(testSet$Status == 0)]) - 
-                                   as.numeric(Status_pred[which(testSet$Status == 0)]))^2)
-                RMS_err_1 <- mean((as.numeric(testSet$Status[which(testSet$Status == 1)]) - 
-                                   as.numeric(Status_pred[which(testSet$Status == 1)]))^2)
-                var_err <- (RMS_err_0 - RMS_err)^2 + (RMS_err_1 - RMS_err)^2
-                stdev_err <- sqrt((RMS_err_0 - RMS_err)^2 + (RMS_err_1 - RMS_err)^2)
-
-                # Model Fit Stats
-                rf_fit_stats <- base::rbind(rf_fit_stats, 
-                                      c(as.integer(nodesize),as.integer(ntree),as.integer(maxit),as.integer(mtry),
-                                        oob_err,oob_0,oob_1,RMS_err,RMS_err_0,RMS_err_1,var_err,stdev_err),
-                                      deparse.level = 1,
-                                      make.row.names = F)
-                
-            } #end for (mtry in mtrys)
-        } #end for (maxit in maxits)
-    } #end for (ntree in ntrees)
-} #end for (nodesize in nodesizes)
-
-colnames(rf_fit_stats) <- c("nodesize","ntree","maxit","mtry","oob_err","oob_0","oob_1","RMS_err","RMS_err_0","RMS_err_1","var_err","stdev_err")
-rf_fit_stats$nodesize  <- as.integer(rf_fit_stats$nodesize)
-rf_fit_stats$ntree     <- as.integer(rf_fit_stats$ntree)
-rf_fit_stats$maxit     <- as.integer(rf_fit_stats$maxit)
-rf_fit_stats$mtry      <- as.integer(rf_fit_stats$mtry)
-
-# Explore Model
-plot(fit_forest,
-     main = "Random Forest")
-
-varImpPlot(fit_forest,
-     cex = 0.7,
-     pt.cex = 1.5,
-     pch = 20,
-     color = "blue",
-     main = "Random Forest Variable Importance")
-
-#Status_pred <- predict(fit_forest, 
-#                       newdata = dataSet,
-#                       type = "response")                          # predicted response 
-#Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
-#Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
-
-# Save model performance for later fit comparisons.
-#model_forest <- data.frame(dataSet["Status"], Status_pred)
-#model_forest$model <- c("Random Forest")
-#model_forest <- mutate(model_forest, accuracy = 1 - abs(as.numeric(Status_pred) - as.numeric(Status)))
-
-#ggplot(model_forest, aes(x = model, fill = factor(accuracy))) +
-#  geom_bar(position = "fill") +
-#  guides(fill = guide_legend(title = "Model Performance")) +
-#  scale_fill_discrete(labels = paste(c("fail", "pass")))
-
-# Confusion Matrix
-#caret::confusionMatrix(data = as.factor(Status_pred),  
-#                reference = as.factor(dataSet$Status))
-
-```
-
-Random Forest fit and test error analysis.
-
-```{r random forest review, eval=T, echo=F, message=F, warning=F}
-
-plotErrors <- function(data, xList="", yList="", byVarList="", xFacetList="", yFacetList="") {
-  
-    myCol <- rbind(brewer.pal(9, "Blues")[c(3,6,8)],
-                   brewer.pal(9, "Reds")[c(3,6,8)])
+# If fitRfFlag = T or fitConstFile doesn't exist, run RF fit routine.
+if(!(file.exists(file.path(pathname, fitConstFile))) | fitRfFlag) {
     
-    #print()
-    for (i in 1:length(xList)) {
-        for (j in 1:length(yList)) {
-            title <- paste(xList[i],"vs",yList[j],"by",byVarList[i],"(row =",xFacetList[i],"x col =",yFacetList[i],") grid",sep=" ")
-            print(  
-                data %>%
-                  #dplyr::select(-oob_0,-oob_1) %>%
-                  ggplot(aes(x=!! sym(xList[i]), y=!! sym(yList[j]), col=as.factor(!! sym(byVarList[i])))) +
-                    geom_line(size=1) +
-                    geom_point() +
-                    scale_x_log10() +
-                    scale_y_log10() +
-                    scale_color_manual(values = myCol) +
-                    facet_grid(vars(!! sym(xFacetList[i])), vars(!! sym(yFacetList[i]))) +
-                    ggtitle(title) 
-            ) #end print
-        } #end for (i)
-    } #end for (j)
-} #end function
+    # Define empty stats dataframe.
+    rf_fit_stats <- data.frame(nodesize=integer(),
+                               ntree=integer(),
+                               maxit=integer(),
+                               mtry=integer(),
+                               cutoff=double(),
+                               RMSE_train=double(),
+                               TPR_train=double(),
+                               TNR_train=double(),
+                               PPV_train=double(),
+                               NPV_train=double(),
+                               ACC_train=double(),
+                               BALACC_train=double(),
+                               F1_train=double(),
+                               F2_train=double(),
+                               RMSE_tune=double(),
+                               TPR_tune=double(),
+                               TNR_tune=double(),
+                               PPV_tune=double(),
+                               NPV_tune=double(),
+                               ACC_tune=double(),
+                               BALACC_tune=double(),
+                               F1_tune=double(),
+                               F2_tune=double(),
+                               stringsAsFactors=FALSE)
+    
+    # Optimize using broad-to-narrow grids.
+    numPasses <- 2                                                     # Number of grids to run.
+    for (passNum in 1:numPasses) {
+        #-------------------------------
+        # RF tuning parameters
+        #-------------------------------
+        # Coarse grid.
+        if (passNum == 1) {
+            nodesizes <- c(1,4,10,40,100)
+            ntrees <- c(10,40,100,400,1000)
+            maxits <- c(10) 
+            mtrys <- c(1,4,10,40,100,400)
+            cutoffs <- c(0.20,0.25,0.30,0.35,0.40,0.45,0.50)
+        } #end if (passNum == 1)
+        
+        # Finer cutoff grid.
+        if (passNum == 2) {
+            nodesizes <- c(1,4,10,40,100)
+            ntrees <- c(10,40,100,400,1000)
+            maxits <- c(10) 
+            mtrys <- c(1,4,10,40,100,400)
+            cutoffs <- c(0.23,0.24,0.26,0.27,0.28,0.29)
+        } #end if (passNum == 2)
+        
+        # mtry fine step.
+        if (passNum == 3) {
+            nodesizes <- c(4)
+            ntrees <- c(400)
+            maxits <- c(10) 
+            mtrys <- c(1:400)
+            cutoffs <- c(0.25)
+        } #end if (passNum == 3)
+        
+        # nodesize fine step.
+        if (passNum == 4) {
+            nodesizes <- c(1:100)
+            ntrees <- c(400)
+            maxits <- c(10) 
+            mtrys <- c(40)
+            cutoffs <- c(0.25)
+        } #end if (passNum == 4)
+        
+        for (nodesize in nodesizes) {
+            for (ntree in ntrees) {
+                for (maxit in maxits) {
+                    for (mtry in mtrys) {
+                        for (cutoff in cutoffs) {
+                            fileName <- paste(pathname,"/rf_nodesize=",nodesize,"_ntree=",ntree,"_maxit=",maxit,"_mtry=",mtry,"_cutoff=",cutoff,".rda", sep="")
+                            
+                            if(file.exists(fileName)) {
+                                
+                                load(fileName)                                 # load model
+                                 
+                            } else {                                           # else refit model
+                                 
+                                fit_forest <- randomForest(Status ~ ., data = trainData, 
+                                                           nodesize = nodesize, 
+                                                           ntree = ntree,
+                                                           maxit = maxit,
+                                                           mtry = mtry,
+                                                           importance = TRUE,
+                                                           keep.forest = TRUE,
+                                                           cutoff = c(1-cutoff,cutoff))
+                                
+                                save(fit_forest, file = fileName)
+                            } #end if
+                        
+                            # Training Fit Errors
+                            Status_train <- predict(fit_forest, newdata = trainData)              # predicted model vals
+                            if (!is.factor(trainData$Status)) {                                  # doesn't apply for classification
+                                Status_train[Status_train < threshold] <- 0                      # reset "pass" level
+                                Status_train[Status_train >= threshold] <- 1                     # reset "fail" level
+                            } #end if
+                            RMSE_train <- mean((as.numeric(trainData$Status) - as.numeric(Status_train))^2)
+                            
+                            cm <- table(data = as.factor(Status_train), reference = as.factor(trainData$Status))
+                            TP <- cm[1,1]                                 # true positive
+                            FN <- cm[2,1]                                 # false positive
+                            FP <- cm[1,2]                                 # false negative
+                            TN <- cm[2,2]                                 # true negative
+                            CP <- TP + FN                                 # condition positive (data)
+                            CN <- TN + FP                                 # condition negative (data)
+                            MP <- TP + FP                                 # predicted positive (model)
+                            MN <- TN + FN                                 # predicted negative (model)
+                            TPR_train <- TP/CP                            # true positive rate (sensitivity, recall)
+                            TNR_train <- TN/CN                            # true negative rate (specificity)
+                            PPV_train <- TP/MP                            # positive predictive value (precision)
+                            NPV_train <- TN/MN                            # negative predictive value
+                            ACC_train <- (TP + TN)/(CP + CN)              # accuracy
+                            BALACC_train <- (TP/CP + TN/CN)/2             # balanced accuracy
+                            F1_train <- 2*(TP/MP)*(TP/CP)/(TP/MP + TP/CP) # F1 score = 2*precision*recall/(precision + recall)
+                            F2_train <- 2*(TN/MN)*(TN/CN)/(TN/MN + TN/CN) # F2 score = 2*NPV*specificity/(NPV + specificity)
+                            
+                            # Tune Fit Errors
+                            Status_tune <- predict(fit_forest, newdata = tuneData)              # predicted model vals
+                            if (!is.factor(tuneData$Status)) {                                  # doesn't apply for classification
+                                Status_tune[Status_tune < threshold] <- 0                       # reset "pass" level
+                                Status_tune[Status_tune >= threshold] <- 1                      # reset "fail" level
+                            } #end if
+                            RMSE_tune <- mean((as.numeric(tuneData$Status) - as.numeric(Status_tune))^2)
+        
+                            cm <- table(data = as.factor(Status_tune), reference = as.factor(tuneData$Status))
+                            TP <- cm[1,1]                                 # true positive
+                            FN <- cm[2,1]                                 # false positive
+                            FP <- cm[1,2]                                 # false negative
+                            TN <- cm[2,2]                                 # true negative
+                            CP <- TP + FN                                 # condition positive (data)
+                            CN <- TN + FP                                 # condition negative (data)
+                            MP <- TP + FP                                 # predicted positive (model)
+                            MN <- TN + FN                                 # predicted negative (model)
+                            TPR_tune <- TP/CP                             # true positive rate (sensitivity, recall)
+                            TNR_tune <- TN/CN                             # true negative rate (specificity)
+                            PPV_tune <- TP/MP                             # positive predictive value (precision)
+                            NPV_tune <- TN/MN                             # negative predictive value
+                            ACC_tune <- (TP + TN)/(CP + CN)               # accuracy
+                            BALACC_tune <- (TP/CP + TN/CN)/2              # balanced accuracy
+                            F1_tune <- 2*(TP/MP)*(TP/CP)/(TP/MP + TP/CP)  # F1 score = 2*precision*recall/(precision + recall)
+                            F2_tune <- 2*(TN/MN)*(TN/CN)/(TN/MN + TN/CN)  # F2 score = 2*NPV*specificity/(NPV + specificity)
+                            
+                            # Model Fit Stats
+                            rf_fit_stats <- base::rbind(rf_fit_stats, 
+                                                        c(as.integer(nodesize),as.integer(ntree),as.integer(maxit),as.integer(mtry),cutoff,
+                                                          RMSE_train,TPR_train,TNR_train,PPV_train,NPV_train,
+                                                          ACC_train,BALACC_train,F1_train,F2_train,
+                                                          RMSE_tune,TPR_tune,TNR_tune,PPV_tune,NPV_tune,
+                                                          ACC_tune,BALACC_tune,F1_tune,F2_tune),
+                                                          deparse.level = 1,
+                                                          make.row.names = F)
+                            
+                        } #end for (cutoff in cutoffs)
+                    } #end for (mtry in mtrys)
+                } #end for (maxit in maxits)
+            } #end for (ntree in ntrees)
+        } #end for (nodesize in nodesizes)
+    } #end for (passNum in 1:numPasses) 
+    
+    colnames(rf_fit_stats) <- c("nodesize","ntree","maxit","mtry","cutoff",
+                                "RMSE_train","TPR_train","TNR_train","PPV_train","NPV_train",
+                                "ACC_train","BALACC_train","F1_train","F2_train",
+                                "RMSE_tune","TPR_tune","TNR_tune","PPV_tune","NPV_tune",
+                                "ACC_tune","BALACC_tune","F1_tune","F2_tune")
+    rf_fit_stats$nodesize  <- as.integer(rf_fit_stats$nodesize)
+    rf_fit_stats$ntree     <- as.integer(rf_fit_stats$ntree)
+    rf_fit_stats$maxit     <- as.integer(rf_fit_stats$maxit)
+    rf_fit_stats$mtry      <- as.integer(rf_fit_stats$mtry)
+    
+    # Save dataset for later use.
+    path_out <- file.path(pathname, fitConstFile)
+    write.csv(rf_fit_stats, path_out)
+    print("Saving RF stats file.")
 
-# Train and Test Errors by Geometries
-plotErrors(rf_fit_stats,
-           yList      = c("RMS_err","oob_err"),
-           xList      = c("ntree"   ,"maxit"   ,"mtry"    ,"nodesize"),
-           byVarList  = c("maxit"   ,"ntree"   ,"ntree"   ,"ntree"),
-           xFacetList = c("mtry"    ,"mtry"    ,"maxit"   ,"maxit"),
-           yFacetList = c("nodesize","nodesize","nodesize","mtry" ))
+} else {
+    
+    rf_fit_stats <- read.csv(file.path(pathname, fitConstFile), stringsAsFactors=F) # load fit constants
+    rf_fit_stats <- within(rf_fit_stats, rm(X))                                     # drop extra variable   
+    print("Reading RF stats file.")
+    
+}
+```
 
-# Train and Test Errors by Geometries
-plotErrors(rf_fit_stats %>% dplyr::filter(ntree > 10),
-           yList      = c("var_err"),
-           xList      = c("ntree"   ,"maxit"   ,"mtry"    ,"nodesize"),
-           byVarList  = c("maxit"   ,"ntree"   ,"ntree"   ,"ntree"),
-           xFacetList = c("mtry"    ,"mtry"    ,"maxit"   ,"maxit"),
-           yFacetList = c("nodesize","nodesize","nodesize","mtry" ))
+### Parameter Analysis
 
-min_RMSE <- min(rf_fit_stats$RMS_err)
-rf_fit_stats[which(RMS_err*abs(rf_fit_stats$RMS_err_1 - rf_fit_stats$RMS_err_0) == min(RMS_err*abs(rf_fit_stats$RMS_err_1 - rf_fit_stats$RMS_err_0))),]
-rf_fit_stats[which(rf_fit_stats$RMS_err == min(rf_fit_stats$RMS_err)),]
-rf_fit_stats[which(rf_fit_stats$stdev_err == min(rf_fit_stats$stdev_err)),]
+Random Forest training fit analysis coarse grid parameter dependencies
+
+```{r rf train - coarse grid cutoff plots, eval=T, echo=F, message=F, warning=F, results='hide', out.width='50%', fig.align='left', fig.show='hold', fig.cap='Training data True Positive Rate (TPR), True Negative Rate (TNR), Accuracy (ACC) and F1 Score (F1) vs. cutoff coarse grid plots.'}
+
+#------------------------------
+# optimize cutoff
+#------------------------------
+plotFitStats(rf_fit_stats %>% 
+             filter(ntree >= 10, 
+                    cutoff %in% c(0.20,0.25,0.30,0.35,0.40,0.45,0.50),
+                    mtry %in% c(1,4,10,40,100,400)),
+           yList      = c("TPR_train","TNR_train","ACC_train","F1_train"),
+           xList      = c("cutoff"  ),
+           byVarList  = c("ntree"   ),
+           xFacetList = c("mtry"    ),
+           yFacetList = c("nodesize"),
+           xScale="lin")
+
+```
+
+### Parameter Optimization
+
+Random Forest tuning analysis coarse grid parameter characterization.
+
+```{r rf tune - coarse grid cutoff plots, eval=T, echo=F, message=F, warning=F, results='hide', out.width='50%', fig.align='left', fig.show='hold', fig.cap='Tuning data True Positive Rate (TPR), True Negative Rate (TNR), Accuracy (ACC) and F1 Score (F1) vs. cutoff coarse grid plots.'}
+
+#------------------------------
+# optimize cutoff
+#------------------------------
+plotFitStats(rf_fit_stats %>% 
+             filter(ntree >= 10, 
+                    cutoff %in% c(0.20,0.25,0.30,0.35,0.40,0.45,0.50),
+                    mtry %in% c(1,4,10,40,100,400)),
+           yList      = c("TPR_tune","TNR_tune","ACC_tune","F1_tune"),
+           xList      = c("cutoff"  ),
+           byVarList  = c("ntree"   ),
+           xFacetList = c("mtry"    ),
+           yFacetList = c("nodesize"),
+           xScale="lin")
 
 ```
 
 
-Training set model.
+```{r rf tune - finer grid cutoff plots, eval=F, echo=F, message=F, warning=F, results='hide', out.width='50%', fig.align='left', fig.show='hold', fig.cap='Tuning data True Positive Rate (TPR), True Negative Rate (TNR), Accuracy (ACC) and F1 Score (F1) vs. cutoff fine grid plots.'}
+
+#------------------------------
+# optimize cutoff
+#------------------------------
+# finer
+plotFitStats(rf_fit_stats %>% 
+             filter(ntree >= 10,
+                    cutoff >= 0.23, cutoff <= 0.3,
+                    mtry %in% c(1,4,10,40,100,400)),
+           yList      = c("TPR_tune","TNR_tune","ACC_tune","F1_tune"),
+           xList      = c("cutoff"  ),
+           byVarList  = c("ntree"   ),
+           xFacetList = c("mtry"    ),
+           yFacetList = c("nodesize"),
+           xScale="lin", yScale="lin")
+
+```
+
+
+
+```{r rf coarse grid cutoff plots, eval=T, echo=F, message=F, warning=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Tuning data True Positive Rate (TPR), True Negative Rate (TNR), Accuracy (ACC) and F1 Score (F1) vs. cutoff overlay plots.'}
+
+# Test Classification Stats vs. cutoff
+plotFitStats(rf_fit_stats %>% filter(ntree == 400,
+                         cutoff %in% c(0.20,0.25,0.30,0.35,0.40,0.45,0.50),
+                         mtry %in% c(1,4,10,40,100,400)),
+           yList      = c("Classification Stats"),
+           xList      = c("cutoff"  ),
+           byVarList  = c("ntree"   ),
+           xFacetList = c("mtry"    ),
+           yFacetList = c("nodesize"),
+           gatherList = c("TPR_tune","TNR_tune","ACC_tune","F1_tune"),
+           xScale = "lin")
+           
+# Tune Classification Stats vs. cutoff
+plotFitStats(rf_fit_stats %>% filter(ntree == 400,
+                         cutoff >= 0.23, cutoff <= 0.3,
+                         mtry %in% c(1,4,10,40,100,400)),
+           yList      = c("Classification Stats"),
+           xList      = c("cutoff"  ),
+           byVarList  = c("ntree"   ),
+           xFacetList = c("mtry"    ),
+           yFacetList = c("nodesize"),
+           gatherList = c("TPR_tune","TNR_tune","ACC_tune","F1_tune"),
+           xScale = "lin")
+           
+# Best overall accuracy at even TPR & TNR
+rf_fit_stats[which(rf_fit_stats$TNR_tune > 0.8 & rf_fit_stats$TPR_tune > 0.8),]
+```
+
+### Optimum Model Parameters (Training Data)
+
+Training model.
 
 ```{r random forest training model, eval=T, echo=F, message=F, warning=F}
 #-----------------------------------------------------------------------
 # Random Forest : randomForest
 #-----------------------------------------------------------------------
 # Training Set
-dataSet <- secom_train_smote #[1:50]                               # Normalized
-dataSet[c('Date','Time','data_type')] <- c(NULL)
-dataSet$Status <- as.factor(dataSet$Status)                        # set to factor for classification fit
+trainData <- secom_train_smote #[1:50]                               # Normalized
+trainData[c('Date','Time','data_type')] <- c(NULL)
+trainData$Status <- as.factor(trainData$Status)                        # set to factor for classification fit
 
-fit_forest <- randomForest(Status ~ ., data = dataSet, 
-                           nodesize = 100, 
-                           ntree = 400,
-                           maxit = 100,
-                           mtry = 400,
-                           importance = TRUE,
-                           keep.forest = TRUE)
+# Select optimum model parameters per above analysis.
+nodesize = 1 
+ntree = 400
+maxit = 10
+mtry = 40
+cutoff = 0.25
+
+#nodesize = 40
+#ntree = 400
+#maxit = 10
+#mtry = 100
+#cutoff = 0.26
+
+fileName <- paste("Data/rf_classification_models/rf_nodesize=",nodesize,"_ntree=",ntree,"_maxit=",maxit,"_mtry=",mtry,"_cutoff=",cutoff,".rda", sep="")
+
+if (file.exists(fileName)) {
+    load(fileName) 
+    print("Model file loaded.")
+} else {
+    fit_forest <- randomForest(Status ~ ., data = trainData, 
+                               nodesize = nodesize, 
+                               ntree = ntree,
+                               maxit = maxit,
+                               mtry = mtry,
+                               importance = TRUE,
+                               keep.forest = TRUE,
+                               #classwt = c(6e-3,6e3),
+                               cutoff = c(1-cutoff,cutoff))
+}
 
 # Explore Model
-plot(fit_forest,
-     main = "Random Forest")
+#plot(fit_forest,
+#     main = "Random Forest")
 
-varImpPlot(fit_forest,
-     cex = 0.7,
-     pt.cex = 1.5,
-     pch = 20,
-     color = "blue",
-     main = "Random Forest Variable Importance")
+#varImpPlot(fit_forest,
+#     cex = 0.7,
+#     pt.cex = 1.5,
+#     pch = 20,
+#     color = "blue",
+#     main = "Random Forest Variable Importance")
 
-Status_pred <- predict(fit_forest, 
-                       newdata = dataSet,
+Status_train <- predict(fit_forest, 
+                       newdata = trainData,
                        type = "response")                          # predicted response 
-Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
-Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
 
-# Save model performance for later fit comparisons.
-#model_forest <- data.frame(dataSet["Status"], Status_pred)
-#model_forest$model <- c("Random Forest")
-#model_forest <- mutate(model_forest, accuracy = 1 - abs(as.numeric(Status_pred) - as.numeric(Status)))
-
-#ggplot(model_forest, aes(x = model, fill = factor(accuracy))) +
-#  geom_bar(position = "fill") +
-#  guides(fill = guide_legend(title = "Model Performance")) +
-#  scale_fill_discrete(labels = paste(c("fail", "pass")))
+if (!is.factor(trainData$Status)) {                                  # doesn't apply for classification
+    Status_train[Status_train < threshold] <- 0                      # reset "pass" level
+    Status_train[Status_train >= threshold] <- 1                     # reset "fail" level
+} #end if
 
 # Confusion Matrix
-caret::confusionMatrix(data = as.factor(Status_pred),  
-                reference = as.factor(dataSet$Status))
+caret::confusionMatrix(data = as.factor(Status_train), reference = as.factor(trainData$Status))
 
 ```
 
-Test set results.
+### Optimum Model Parameters (Tuning Data)
+
+Tuning dataset results.
+
+```{r random forest tune, eval=T, echo=F, message=F, warning=F}
+# Test Set
+tuneData <- secom_tune                                              # Useful for limiting data for debug.
+tuneData[c('Date','Time','data_type')] <- c(NULL)
+tuneData$Status <- as.factor(tuneData$Status)                        # set to factor for classification fit
+                  
+Status_tune <- predict(fit_forest,
+                       newdata = tuneData,
+                       type = "response")                          # predicted model vals
+
+if (!is.factor(tuneData$Status)) {                                  # doesn't apply for classification
+    Status_tune[Status_tune < threshold] <- 0                      # reset "pass" level
+    Status_tune[Status_tune >= threshold] <- 1                     # reset "fail" level
+} #end if
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_tune), reference = as.factor(tuneData$Status))
+
+```
+
+### Optimum Model Parameters (Test Data)
+
+Test dataset results.
 
 ```{r random forest test, eval=T, echo=F, message=F, warning=F}
 # Test Set
-testSet <- secom_test                                              # Useful for limiting data for debug.
-testSet[c('Date','Time','data_type')] <- c(NULL)
-testSet$Status <- as.factor(testSet$Status)                        # set to factor for classification fit
+testData <- secom_verify                                              # Useful for limiting data for debug.
+testData[c('Date','Time','data_type')] <- c(NULL)
+testData$Status <- as.factor(testData$Status)                        # set to factor for classification fit
+                  
+Status_pred <- predict(fit_forest,
+                       newdata = testData,
+                       type = "response")                          # predicted model vals
 
-Status_test <- predict(fit_forest, newdata = testSet)              # predicted model vals
-
-# Save model performance for later fit comparisons.
-model_forest_test <- data.frame(testSet["Status"], Status_test)
-model_forest_test$model <- c("Random Forest - Test")
-model_forest_test <- mutate(model_forest_test, accuracy = 1 - abs(as.numeric(Status_test) - as.numeric(Status)))
+if (!is.factor(testData$Status)) {                                  # doesn't apply for classification
+    Status_pred[Status_pred < threshold] <- 0                      # reset "pass" level
+    Status_pred[Status_pred >= threshold] <- 1                     # reset "fail" level
+} #end if
 
 # Confusion Matrix
-caret::confusionMatrix(data = as.factor(Status_test),  
-                       reference = as.factor(testSet$Status))
+caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(testData$Status))
 
 ```
 
 
-# Appendix A - Final Transformed Variable Distributions
 
-```{r all distributions and QQ plots, eval=T, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. A.1: Final transformed variable density and QQ plots.'}
+```{r experimental train random forest, eval=F, echo=F, message=F, warning=F}
+trainData <- secom_train_smote
+trainData[c('Date','Time','data_type')] <- c(NULL)
+#trainData$Status <- as.factor(trainData$Status)                    # set to factor for classification fit
+
+# Test Set
+tuneData <- secom_tune                                             # Normalized
+tuneData[c('Date','Time','data_type')] <- c(NULL)
+#tuneData$Status <- as.factor(tuneData$Status)                      # set to factor for classification fit
+
+#set.seed(949)
+
+#fitControl <- trainControl(method = "cv",
+#                           classProbs = TRUE,
+#                           summaryFunction = twoClassSummary)
+
+fitControl <- trainControl(## 10-fold CV
+                           method = "repeatedcv",
+                           number = 10,
+                           ## repeated ten times
+                           repeats = 10,
+                           classProbs = TRUE)
+
+mod1 <- train(Status ~ ., data = trainData,
+               method = "rf",
+               metric = "ROC",
+               tuneGrid = data.frame(mtry = 3),
+               trControl = fitControl)
+
+getTrainPerf(mod0)
+
+
+
+# Predicted Training Results
+Status_pred <- predict(mod0,
+                       newdata = trainData)                          # predicted model vals
+#if (!is.factor(tuneData$Status)) {                                  # doesn't apply for classification
+#    Status_pred[Status_pred < threshold] <- 0                      # reset "pass" level
+#    Status_pred[Status_pred >= threshold] <- 1                     # reset "fail" level
+#} #end if
+
+pred = ROCR::prediction(Status_pred, trainData$Status)
+AUC <- as.numeric(ROCR::performance(pred, "auc")@y.values)
+AUC
+
+ROCRpred = ROCR::prediction(Status_pred, trainData$Status)
+ROCRperf = ROCR::performance(ROCRpred, measure="sens", x.measure="spec")
+
+plot(ROCRperf, colorize = TRUE, print.cutoffs.at=seq(0,1,by=0.1))
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(trainData$Status))
+
+# Predicted Test Results
+Status_pred <- predict(mod0,
+                       newdata = tuneData)                          # predicted model vals
+#if (!is.factor(tuneData$Status)) {                                  # doesn't apply for classification
+#    Status_pred[Status_pred < threshold] <- 0                      # reset "pass" level
+#    Status_pred[Status_pred >= threshold] <- 1                     # reset "fail" level
+#} #end if
+
+pred = ROCR::prediction(Status_pred, tuneData$Status)
+AUC <- as.numeric(ROCR::performance(pred, "auc")@y.values)
+AUC
+
+ROCRpred = ROCR::prediction(Status_pred, tuneData$Status)
+ROCRperf = ROCR::performance(ROCRpred, measure="sens", x.measure="spec")
+
+plot(ROCRperf, colorize = TRUE, print.cutoffs.at=seq(0,1,by=0.1))
+
+# Confusion Matrix
+caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(tuneData$Status))
+
+```
+
+
+# Appendix A - Initial Variable Distributions
+
+```{r initial distributions and QQ plots, eval=T, echo=F, warning=F, message=F, results='hide', out.width='100%', fig.align='center', fig.show='hold', fig.cap='Fig. A.1: Initial variable density and QQ plots.'}
 
 # Density + Q-Q Plots
-plot_data <- secom_trans
+#plot_data <- secom_trans
+plot_data <- secom
 sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
-distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nBins=100, QQplot=TRUE)
+#distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nPlot=9, nBins=100, QQplot=TRUE)
+distMatrix(plot_data, plotVars=sensorVars, factorBy="Status", plotDim=3, nStart=1, nBins=100, QQplot=TRUE)
 ```
+
+# Appendix B - Final Transformed Variable Distributions
+
+```{r final distributions and QQ plots, eval=T, echo=F, warning=F, message=F, results='hide', out.width='100%', fig.align='center', fig.show='hold', fig.cap='Fig. B.1: Final transformed variable density and QQ plots.'}
+
+# Density + Q-Q Plots
+#plot_data <- secom_trans
+plot_data <- secom_imp
+sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
+#distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nPlot=9, nBins=100, QQplot=TRUE)
+distMatrix(plot_data, plotVars=sensorVars, factorBy="Status", plotDim=3, nStart=1, nBins=100, QQplot=TRUE)
+```
+
+# Appendix C - Baseline Logistic Regression Model Results
+
+```{r baseline logistic regression model results, eval=T, echo=F, warning=F, message=F, fig.cap='Fig. B.1: Final transformed variable density and QQ plots.'}
+
+summary(fit_glm_baseline_1)
+
+```
+
+# Appendix D - Iterative Logistic Regression Model Results
+
+```{r iterative logistic regression model results, eval=T, echo=F, warning=F, message=F, fig.cap='Fig. B.1: Final transformed variable density and QQ plots.'}
+
+summary(fit_glm_baseline_2)
+
+```
+
+# Appendix E - Class Balanced Iterative Logistic Regression Model Results
+
+```{r smote balanced iterative logistic regression model results, eval=T, echo=F, warning=F, message=F, fig.cap='Fig. B.1: Final transformed variable density and QQ plots.'}
+
+summary(fit_glm_baseline_3)
+
+```
+

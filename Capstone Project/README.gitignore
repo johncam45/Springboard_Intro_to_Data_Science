@@ -14,14 +14,12 @@ Summary of Files
 12. Data/secom_labels.data............................Original SECOM dataset.
 13. Data/secom_imp.csv................................Imputed dataset.
 14. Data/secom_smote.csv..............................Class balanced dataset.
-
+15. Data/glm_regression_models........................Iterative logistic model files.
+16. Data/glm_regression_smote_models..................Iterative logistic model files.
+17. Data/rf_classification_models.....................Random forest model files.
 
 Comments:
-To download html files without having to download the entire repository:
-* Please click on the file's hyperlink. 
-* When the Github viewing page opens it states that the file is too large to display. 
-* Proceed to click "Download". 
-* Depending on the browser used it will either download or open an html formatted page in a new tab. 
-* If the latter, right click anywhere on the page and select "Save as...". 
-* Save the file to your local drive
-* Locate the file in your file explorer then double-click on it to open the file in your default browser.
+To view html files without having to download the entire repository please:
+* Copy the html file URL.
+* Open http://htmlpreview.github.io in a new browser tab.
+* Insert URL on this page.
