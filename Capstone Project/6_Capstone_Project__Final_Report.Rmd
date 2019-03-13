@@ -32,7 +32,7 @@ knitr::opts_chunk$set(echo = T)
 
 # Set options.
 options(max.print=2500)
-#options(na.action = "na.exclude")
+
 ```
 \newline
 \pagebreak
@@ -111,11 +111,11 @@ distMatrix <- function(data, plotVars="", factorBy="", plotDim=1, nStart=1, nPlo
 
         for (m in 1:numXaxes) { 
             if (m > 1) {
+              
                 data[plotVars[firstVar:lastVar]] <- abs(data[plotVars[firstVar:lastVar]])          # density vs. log10[abs(var)]
-                #data[data == 0] <- 1e-15                          # clean log(0) issue
                 if (data[plotVars[firstVar:lastVar]] == 0) {data[plotVars[firstVar:lastVar]] <- 1e-15}
-                
                 title = "Density vs. log(Var)"
+                
             } else {title = titleInit}
           
             if (factorBy == "") {                                  # no factoring
@@ -126,6 +126,7 @@ distMatrix <- function(data, plotVars="", factorBy="", plotDim=1, nStart=1, nPlo
                     ggplot(aes(x=value)) +
                       facet_wrap(~ var, scales = "free") +
                       ggtitle(title) 
+                
                 if (hist) {p <- p +  
                     geom_histogram(aes(y = ..density..), 
                                    bins = nBins,
@@ -133,6 +134,7 @@ distMatrix <- function(data, plotVars="", factorBy="", plotDim=1, nStart=1, nPlo
                                    alpha = 0.8,
                                    color = "blue") 
                 } #end if (hist)
+                
                 if (density) p <- p + geom_density(alpha = 0.4)
                 if (xScale == "log10" | m > 1) p <- p + scale_x_log10()
                 print(p)
@@ -157,18 +159,18 @@ distMatrix <- function(data, plotVars="", factorBy="", plotDim=1, nStart=1, nPlo
                     gather(key="var", value="value", plotVars[firstVar:lastVar]) %>%
                     ggplot(aes(x=value, color=as.factor(!! sym(factorBy)))) +
                       theme_bw() +
-                      #scale_color_manual(values=c("#999999", "#E69F00", "#56B4E9")) +
                       scale_color_brewer(palette="Set1", type="div") +    # colors
                       scale_fill_brewer(palette="Set1", type="div") + # fill
                       facet_wrap(~ var, scales = "free") +
                       ggtitle(title) 
+                
                 if (hist) {p <- p + 
                              geom_histogram(aes(y = ..density..), 
                                             bins = nBins,
                                             position = "identity",
-                                            #position = "dodge",
                                             alpha = 0.1)  
                 }  #end if (hist)
+                
                 if (density) p <- p + geom_density(size=1, fill=NA, alpha = 0.1) 
                 if (xScale == "log10" | m > 1) p <- p + scale_x_log10()
                 print(p)
@@ -387,13 +389,16 @@ secom <- cbind(secom_labels, secom)                                # P/F data
 
 numVarsInit = round(length(names(secom)), 0)
 numMissInit = round(n_miss(secom), 0)
+
 ```
 
 The [SECOM Data Set](http://archive.ics.uci.edu/ml/datasets/secom) consists of two csv files. The first is a list of pass/fail and date/time results, one entry per wafer run, and the other contains the corresponding numeric results of sensor readings from a semiconductor manufacturing line. The data files do not contain a header so variable names 'Status', 'Date', and 'Time' were assigned for pass = -1 / fail = +1, date and time. The 'Status' variable is then updated to pass = 0 / fail = +1 for convenience when fitting the data to categorical models. The remaining variables assumed default names: V1, V2, etc. Table 2.1 below shows a sampling of the initial dataset. Since the sensor variables are not named in the original dataset, and since no information is provided about the physical meaning, source or process order of each sensor's data, there is no way to attribute any process or business meaning to the data. Therefore the analysis herein will take a "black box" approach. 
 
 ```{r wrangling table, echo=F, warning=F, message=F}
+
 kable(secom[1:5,1:7], caption = 'Table 2.1: Sampling of the SECOM dataset.') %>%
   kable_styling(bootstrap_options = "striped", full_width = F)
+
 ```
 
 \newline
@@ -579,11 +584,6 @@ gg_miss_var(secom) +
 
 ```{r imputation, eval=T, echo=F, message=F, warning=F, results='hide'}
 
-# Scaled data
-#secom_scaled <- scale(as.matrix(secom_wip[,which(grepl("^V",names(secom_wip)))]))
-#secom_scaled <- bind_cols(secom_wip['Status'], secom_wip['Date'], secom_wip['Time'], data.frame(secom_scaled))
-#secom_wip <- secom_scaled
-
 #-----------------------------------------------------------------------
 # Imputation: MICE
 #-----------------------------------------------------------------------
@@ -624,7 +624,6 @@ if (imputeFlag) {    # set flag in setup chunk
     path_in <- file.path("Data", "secom_imp.csv")
     secom_imp <- read.csv(path_in, stringsAsFactors=F) 
     secom_imp <- within(secom_imp, rm(X))                          # drop extra variable    
-    #secom_imp$Status <- as.factor(secom_imp$Status)
 } #end if (imputeFlag)
 
 paste("There are", n_miss(secom_imp), "missing values remaining.")
@@ -655,12 +654,15 @@ There are several R packages for imputing data. Initially, the [simputation](htt
 &nbsp;
 
 ```{r sample imputed distribution, eval=T, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 2.2: Example distributions before and after imputation'}
+
 # Review results.
 sensorVars <- names(secom_wip)[grepl("^V",names(secom_wip)) & !grepl("_NA$",names(secom_wip))]
 distMatrix(bound_data, plotVars=sensorVars, factorBy="data_type", plotDim=1, nStart=1, nPlot=2, nBins=200, numXaxes=1)
+
 ```
 
 ```{r sample imputed scatter, eval=T, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 2.3: Example scatterplot overlay of imputed and original data. Imputed data is shown standalone on the right.'}
+
 # Review results.
 sensorVars <- names(secom_wip)[grepl("^V",names(secom_wip)) & !grepl("_NA$",names(secom_wip))]
 p <- secom_imp_bound %>% dplyr::select(V1,V2,V1_NA,V2_NA)
@@ -694,6 +696,7 @@ wrangled <- data.frame(Metric, Initial, Final)
 
 kable(wrangled, caption = 'Table 2.2: Summary of data wrangling.') %>%
   kable_styling(bootstrap_options = "striped", full_width = F)
+
 ```
 
 \newline
@@ -709,8 +712,8 @@ An important requirement for developing a multivariate model for this project is
 &nbsp;
 
 ```{r plot Var2 density, echo=F, warning=F, message=F, results='hide', out.width='50%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.1: Example of near normal distributions.'}
+
 # Copy of data for plotting.
-#plot_data <- secom_wip
 plot_data <- secom
 sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
 plot_data$Yield <- as.factor(plot_data$Status)
@@ -816,6 +819,7 @@ A scatter plot is good way to assess relationships between pairs of variables. T
 &nbsp;
 
 ```{r scatter plot example, echo=F, message=F, warning=F, results='hide', out.width='90%', fig.align='center', fig.show='hold', fig.cap='Fig. 3.5: Example scatter plot matrix.'}
+
 #-----------------------------------------------------------------------
 # Scatter Plot Matrix
 #-----------------------------------------------------------------------
@@ -823,6 +827,7 @@ dataSet <- secom_wip[1:12]                                       # Useful for li
 dataSet[c('Date','Time','Yield')] <- c(NULL)
 
 plot(dataSet)
+
 ```
 
 \newline
@@ -854,25 +859,19 @@ ggplot(corr_sample, aes(reorder(pairName,coeff), coeff, col=Range)) +
        x = "Variable Pair Names",
        y = "Correlation Coefficient")
 
-# p-values vs. variable parings
-#ggplot(corr_sample, aes(reorder(pairName,coeff), p, col=Range)) +
-#  geom_point(size=2) +
-#  theme(axis.text.x = element_text(size = 10, angle = 60, hjust=1)) +
-#  labs(title = "Sample of Correlation Coefficents",
-#       x = "Variable Pair Names",
-#       y = "P-Values")
 ```
 
 \newline
 &nbsp;
 
 ```{r sample correlation table, echo=F, warning=F, message=F, out.width='50%'}
-#corr_sample$Range <- NULL
+
 corr_sample$pairName <- NULL
 corr_sample$p <- NULL
 corr_sample$coeff <- round(corr_sample$coeff,4)
 kable(corr_sample, caption = 'Table 3.1: Data used for Fig. 3.6.') %>%
   kable_styling(bootstrap_options = "striped", full_width = F)
+
 ```
 
 \newline
@@ -884,6 +883,7 @@ A correlogram is another useful visualization tool for spotting trends in variab
 &nbsp;
 
 ```{r correlogram example, eval=T, echo=F, message=F, warning=F, results='hide', out.width='75%', fig.align='center', fig.cap='Fig. 3.7: Example correlogram plot.'}
+
 #-----------------------------------------------------------------------
 # Sample Correlogram
 #-----------------------------------------------------------------------
@@ -940,6 +940,7 @@ ggplot(corr_dv, aes(reorder(var2,coeff), coeff)) +
   labs(title = "Correlation Coefficents for Dependent Variable 'Status'",
        x = "Variable Names",
        y = "Correlation Coefficient")
+
 ```
 
 \newline
@@ -1047,7 +1048,6 @@ cm
 ```{r baseline logistic model initial test, eval=T, echo=F, message=F, warning=F}
 
 # Test Set
-#testData <- rbind(secom_tune,secom_verify)
 testData <- secom_tune
 testData[c('Date','Time','data_type')] <- c(NULL)
 
@@ -1086,7 +1086,6 @@ Status_pred <- predict(fit_glm_baseline_1,
 ROCRpred = ROCR::prediction(Status_pred, tuneData$Status)
 ROCRperf = ROCR::performance(ROCRpred, measure="tpr", x.measure="fpr")
 AUC <- round(as.numeric(ROCR::performance(ROCRpred, "auc")@y.values),4)
-#print(paste("AUC = ",AUC,sep=""))
 
 ```
 
@@ -1096,6 +1095,7 @@ The area under the receiver operating characteristic (ROC) curve, or area under 
 ```{r baseline logistic model ROC plot, eval=T, echo=F, message=F, warning=F, results='hide', out.width='75%', fig.align='center', fig.show='hold', fig.cap='Fig. 4.1: Receiver operating characteristic (ROC) curve for baseline logistic model fit.'}
 
 plot(ROCRperf, colorize = TRUE, print.cutoffs.at=seq(0,1,by=0.1))
+
 ```
 
 ### Threshold Tuning
@@ -1110,7 +1110,6 @@ threshold_glm_baseline <- tune_threshold(data = Status_pred, reference = tuneDat
 ```{r baseline logistic model ROC tune, eval=T, echo=F, message=F, warning=F}
 
 # Test Set
-#testData <- rbind(secom_tune,secom_verify)
 tuneData <- secom_tune
 tuneData[c('Date','Time','data_type')] <- c(NULL)
 
@@ -1145,7 +1144,6 @@ cm
 ```{r baseline logistic model verify, eval=T, echo=F, message=F, warning=F}
 
 # Test Set
-#testData <- rbind(secom_tune,secom_verify)
 testData <- secom_verify
 testData[c('Date','Time','data_type')] <- c(NULL)
 
@@ -1256,13 +1254,13 @@ if(file.exists(file.path(pathname, modelFile))) {
 } # end if file.exists
 
 Status_pred <- fitted(fit_glm_baseline_2)                          # predicted model vals
-#Status_pred <- predict(fit_glm_baseline_2)                          # predicted model vals
 Status_pred[Status_pred < threshold] <- 0                          # reset "pass" level
 Status_pred[Status_pred >= threshold] <- 1                         # reset "fail" level
 
 # Other useful functions 
 summary <- summary(fit_glm_baseline_2)                               # summary results
 AIC <- round(as.double(summary[5],1))
+numFeatures <- as.numeric(fit_glm_baseline_2[6]) - 1
 #coefficients(fit_glm_baseline_2)                                  # model coefficients
 #confint(fit_glm_baseline_2, level=0.95)                           # CIs for model parameters 
 #fitted(fit_glm_baseline_2)                                        # predicted values
@@ -1285,7 +1283,7 @@ stats_iterglm_train <- data.frame(model,stage,TPR,TNR,ACC,F1, stringsAsFactors=F
 
 ```
 
-In the original logistic fit many coefficients showed very little significance, meaning their significance values were > 0.05. In the following fitting approach the logistic regression is performed iteratively with the least significant variable removed after each iteration. This assures that only the most significant features remain. Please refer to Appendix B for model output details. This approach shows a significant improvement in AIC score of `r AIC`. The accuracy = `r ACC`, F1 score = `r F1` and TPR = `r TPR` are also very good, but TNR = `r TNR` has dropped significantly compared with the base model. Confusion matrix results and a plot of most to least significant model features are shown below.
+In the original logistic fit many coefficients showed very little significance, meaning their significance values were > 0.05. In the following fitting approach the logistic regression is performed iteratively with the least significant variable removed after each iteration. This assures that only the `r numFeatures` most significant features remain. Please refer to Appendix B for model output details. This approach shows a significant improvement in AIC score of `r AIC`. The accuracy = `r ACC`, F1 score = `r F1` and TPR = `r TPR` are also very good, but TNR = `r TNR` has dropped significantly compared with the base model. Confusion matrix results and a plot of most to least significant model features are shown below.
 
 ```{r iterative baseline logistic model confusion matrix, eval=T, echo=F, message=F, warning=F}
 cm
@@ -1319,7 +1317,6 @@ ggplot(c, aes(reorder(vars,Pr...z..), Pr...z..)) +
 ```{r baseline iterated logistic model initial test, eval=T, echo=F, message=F, warning=F}
 
 # Test Set
-#testData <- rbind(secom_tune,secom_verify)
 testData <- secom_tune
 testData[c('Date','Time','data_type')] <- c(NULL)
 
@@ -1358,7 +1355,6 @@ Status_pred <- predict(fit_glm_baseline_2,
 ROCRpred = ROCR::prediction(Status_pred, tuneData$Status)
 ROCRperf = ROCR::performance(ROCRpred, measure="tpr", x.measure="fpr")
 AUC <- round(as.numeric(ROCR::performance(ROCRpred, "auc")@y.values), 4)
-#print(paste("AUC = ",AUC,sep=""))
 
 ```
 
@@ -1367,6 +1363,7 @@ For this model AUC = `r AUC`. The ROC curve for the tuning dataset is plotted be
 ```{r baseline iterated logistic model ROC plot, eval=T, echo=F, message=F, warning=F, results='hide', out.width='75%', fig.align='center', fig.show='hold', fig.cap='Fig. 4.5: Receiver operating characteristic (ROC) curve for baseline iterative logistic model fit.'}
 
 plot(ROCRperf, colorize = TRUE, print.cutoffs.at=seq(0,1,by=0.1))
+
 ```
 
 ### Threshold Tuning
@@ -1381,7 +1378,6 @@ threshold_glm_iterated <- tune_threshold(data = Status_pred, reference = tuneDat
 ```{r baseline iterated logistic model threshold tune, eval=T, echo=F, message=F, warning=F}
 
 # Test Set
-#testData <- rbind(secom_tune,secom_verify)
 tuneData <- secom_tune
 tuneData[c('Date','Time','data_type')] <- c(NULL)
 
@@ -1546,17 +1542,19 @@ secom_train_smote <- secom_smote                                   # start & end
 
 ```{r smote summary table, echo=F, message=F, warning=F}
 
-kable(status_smote, caption = 'Table 4.4: Taining dataset summary before and after rebalaning.') %>%
+kable(status_smote, caption = 'Table 4.4: Training dataset summary before and after rebalaning.') %>%
   kable_styling(bootstrap_options = "striped", full_width = F)
 
 ```
 
   
 ```{r sample smote distribution, echo=F, warning=F, message=F, results='hide', out.width='75%', fig.align='center', fig.cap='Fig. 4.8: Example distributions comparing original and synthesized of failure observation distributions.'}
+
 # Review results.
 sensorVars <- names(secom_smote)[grepl("^V",names(secom_smote)) & !grepl("_NA$",names(secom_smote))]
 #distMatrix(secom_smote, plotVars=sensorVars, factorBy="data_type", plotDim=3, nStart=1, nPlot=9, nBins=100, numXaxes=1)
 distMatrix(secom_smote %>% filter(Status == 1), plotVars=sensorVars, factorBy="data_type", plotDim=3, nStart=1, nPlot=9, nBins=100, numXaxes=1, hist=F)
+
 ```
 
 ## Iterative Logistic Regression Revisited
@@ -1618,6 +1616,7 @@ Status_pred[Status_pred >= threshold] <- 1                         # reset "fail
 # Other useful functions 
 summary <- summary(fit_glm_baseline_3)                               # summary results
 AIC <- round(as.double(summary[5],1))
+numFeatures <- as.numeric(fit_glm_baseline_3[6]) - 1
 #coefficients(fit_glm_baseline_3)                                  # model coefficients
 #confint(fit_glm_baseline_3, level=0.95)                           # CIs for model parameters 
 #fitted(fit_glm_baseline_3)                                        # predicted values
@@ -1640,7 +1639,7 @@ stats_iterglmsmote_train <- data.frame(model,stage,TPR,TNR,ACC,F1, stringsAsFact
 
 ```
 
-Now that the training dataset is balanced the iterative logistic model is refit. Please refer to Appendix B for detailed model output. The AIC score of `r AIC` is a further improvement with accuracy = `r ACC`, F1 score = `r F1`, TPR = `r TPR` and TNR = `r TNR`. Confusion matrix results and a plot of most to least significant model features are shown below. The number of significant features has substantially increased as shown in Fig. 4.9.
+Now that the training dataset is balanced the iterative logistic model is refit. Please refer to Appendix B for detailed model output. The AIC score of `r AIC` is a further improvement with accuracy = `r ACC`, F1 score = `r F1`, TPR = `r TPR` and TNR = `r TNR`. Confusion matrix results and a plot of most to least significant model features are shown below. The number of significant features has substantially increased to `r numFeatures` as shown in Fig. 4.9.
 
 ```{r iterative smote logistic model confusion matrix, eval=T, echo=F, message=F, warning=F}
 cm
@@ -1664,7 +1663,6 @@ After running the tuning data against the model, accuracy, TPR and TNR all decre
 ```{r iterative smote logistic model initial test, eval=T, echo=F, message=F, warning=F}
 
 # Test Set
-#testData <- rbind(secom_tune,secom_verify)
 testData <- secom_tune
 testData[c('Date','Time','data_type')] <- c(NULL)
 
@@ -1693,7 +1691,6 @@ Status_pred <- predict(fit_glm_baseline_3,
 ROCRpred = ROCR::prediction(Status_pred, tuneData$Status)
 ROCRperf = ROCR::performance(ROCRpred, measure="tpr", x.measure="fpr")
 AUC <- round(as.numeric(ROCR::performance(ROCRpred, "auc")@y.values), 4)
-#print(paste("AUC = ",AUC,sep=""))
 
 ```
 
@@ -1702,6 +1699,7 @@ The new AUC = `r AUC` is a decreased showing poorer pass/fail discernability. Th
 ```{r iterated smote logistic model ROC plot, eval=T, echo=F, message=F, warning=F, results='hide', out.width='75%', fig.align='center', fig.show='hold', fig.cap='Fig. 4.10: Receiver operating characteristic (ROC) curve for class balanced, iterative logistic model fit.'}
 
 plot(ROCRperf, colorize = TRUE, print.cutoffs.at=seq(0,1,by=0.1))
+
 ```
 
 ### Threshold Tuning
@@ -1751,7 +1749,6 @@ cm
 ```{r iterative smote logistic model verify, eval=T, echo=F, message=F, warning=F}
 
 # Test Set
-#testData <- rbind(secom_tune,secom_verify)
 testData <- secom_verify
 testData[c('Date','Time','data_type')] <- c(NULL)
 
@@ -2098,6 +2095,7 @@ plotFitStats(rf_fit_stats %>% filter(ntree == 400,
            
 # Best overall accuracy at even TPR & TNR
 rf_fit_stats[which(rf_fit_stats$TNR_tune > 0.8 & rf_fit_stats$TPR_tune > 0.8),]
+
 ```
 
 ### Optimum Model (Training Data)
@@ -2180,6 +2178,7 @@ cm
 ### Optimum Model (Tuning Data)
 
 ```{r random forest tune, eval=T, echo=F, message=F, warning=F, results='hide'}
+
 # Test Set
 tuneData <- secom_tune                                              # Useful for limiting data for debug.
 tuneData[c('Date','Time','data_type')] <- c(NULL)
@@ -2217,6 +2216,7 @@ cm
 ### Optimum Model (Test Data)
 
 ```{r random forest test, eval=T, echo=F, message=F, warning=F, results='hide'}
+
 # Test Set
 testData <- secom_verify                                              # Useful for limiting data for debug.
 testData[c('Date','Time','data_type')] <- c(NULL)
@@ -2292,6 +2292,7 @@ model_train <- rbind(stats_glm_train, stats_iterglm_train, stats_iterglmsmote_tr
 colnames(model_train) <- c("Model","Stage","TPR","TNR","Accuracy","F1-Score")
 kable(model_train, caption = 'Table 4.7: Model training summary.') %>%
   kable_styling(bootstrap_options = "striped", full_width = F)
+
 ```
 
 ### Tuning Summary
@@ -2304,6 +2305,7 @@ model_tune <- rbind(stats_glm_tune, stats_iterglm_tune, stats_iterglmsmote_tune,
 colnames(model_tune) <- c("Model","Stage","TPR","TNR","Accuracy","F1-Score")
 kable(model_tune, caption = 'Table 4.8: Model tuning summary.') %>%
   kable_styling(bootstrap_options = "striped", full_width = F)
+
 ```
 
 ### Final Test Summary
@@ -2346,15 +2348,16 @@ model_test %>%
 
 ## Conclusions
 
-* The baseline logistic model yielded an accuracy of TPR = `r model_test[1,3]`, TNR = `r model_test[1,4]`, `r 100*model_test[1,5]`%, F1 score = `r 100*model_test[1,6]`% but used all `r as.numeric(fit_glm_baseline_1[6]) - 1` features.
-* The more efficient model with this same predictive power as the baseline model was the iterated logistic model applied to class balanced data which yielded an accuracy of TPR = `r model_test[3,3]`, TNR = `r model_test[3,4]`, `r 100*model_test[3,5]`%, F1 score = `r 100*model_test[3,6]`% and used only `r as.numeric(fit_glm_baseline_3[6]) - 1` features.
-* The random forest model performance was slightly lower than the above logistic models, but the stability in the model from tuning to test suggest the model is a very good runner-up.
+* The baseline logistic model utilizing all `r as.numeric(fit_glm_baseline_1[6]) - 1` features yielded a model performance of TPR = `r model_test[1,3]`, TNR = `r model_test[1,4]`, accuracy = `r 100*model_test[1,5]`% and F1 score = `r 100*model_test[1,6]`%.
+* A more efficient model with the same predictive power as the baseline model was the iterated logistic model applied to class balanced data which yielded a model performance of TPR = `r model_test[3,3]`, TNR = `r model_test[3,4]`, accuracy = `r 100*model_test[3,5]`% and F1 score = `r 100*model_test[3,6]`%, but used only `r as.numeric(fit_glm_baseline_3[6]) - 1` features.
+* The random forest model performance was slightly lower than the above logistic models, but the stability in the model from tuning to test stages suggests that the model is a very good runner-up.
 
 ## Future Recommendations
 
 * The power and utility of random forest was evident in the initial training results, but even using class balanced data and optimizing on the 'cutoff' parameter, the model still suffered from over fitting. The next step for this dataset is to apply algorithm ensemble techniques mentioned earlier for addressing class imbalance. In particular XG Boost, an extreme gradient boost algorithm based on trees, is of interest due to its out-of-the-box performance, versatility in tuning parameters and parallel processing capability.
 * The biggest problem with the current dataset was not having any information on the sensor origins. If the physical meaning of the measurements were available it would be possible to perform feature engineering to properly transform the data based on the underlying physical meaning. 
 * The pass/fail criteria for the current dataset is another unknown. If this criteria was available it would provide additional feature engineering support or suggest additional sub classifications, meaning there may be more than one failure criteria at work which affects which sensors are more relevant for each failure type. The current model assumes the same sensors are important for all failures which is not correct. 
+
 
 ```{r experimental train random forest, eval=F, echo=F, message=F, warning=F}
 trainData <- secom_train_smote
@@ -2440,11 +2443,10 @@ caret::confusionMatrix(data = as.factor(Status_pred), reference = as.factor(tune
 ```{r initial distributions and QQ plots, eval=T, echo=F, warning=F, message=F, results='hide', out.width='100%', fig.align='center', fig.show='hold', fig.cap='Fig. A.1: Initial variable density and QQ plots.'}
 
 # Density + Q-Q Plots
-#plot_data <- secom_trans
 plot_data <- secom
 sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
-#distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nPlot=9, nBins=100, QQplot=TRUE)
-distMatrix(plot_data, plotVars=sensorVars, factorBy="Status", plotDim=3, nStart=1, nBins=100, QQplot=TRUE)
+distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nBins=100, QQplot=TRUE)
+
 ```
 \newline
 \pagebreak
@@ -2454,11 +2456,10 @@ distMatrix(plot_data, plotVars=sensorVars, factorBy="Status", plotDim=3, nStart=
 ```{r final distributions and QQ plots, eval=T, echo=F, warning=F, message=F, results='hide', out.width='100%', fig.align='center', fig.show='hold', fig.cap='Fig. B.1: Final transformed variable density and QQ plots.'}
 
 # Density + Q-Q Plots
-#plot_data <- secom_trans
 plot_data <- secom_imp
 sensorVars <- names(plot_data)[grepl("^V",names(plot_data)) & !grepl("_NA$",names(plot_data))]
-#distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nPlot=9, nBins=100, QQplot=TRUE)
-distMatrix(plot_data, plotVars=sensorVars, factorBy="Status", plotDim=3, nStart=1, nBins=100, QQplot=TRUE)
+distMatrix(plot_data, plotVars=sensorVars, plotDim=3, nStart=1, nBins=100, QQplot=TRUE)
+
 ```
 \newline
 \pagebreak
